@@ -80,6 +80,8 @@ sudo systemctl restart bitutyutor
 - `/delete_tutor` — tyutorni o'chirish (uning guruhlari va talabalari ham o'chiriladi, oldin tasdiq so'raladi)
 - `/users` — botni ishga tushirgan **barcha** foydalanuvchilar: ✅ ro'yxatdan o'tganlar va 🕗 o'tmaganlar,
   har birida ism, username va Telegram ID; 20 tadan sahifalanadi
+- `/test_users` — 🧪 test userlar ro'yxati: qo'shish (ID kiritib yoki xabarini forward qilib) va
+  o'chirish. Faqat shu ro'yxatdagilar qayta ro'yxatdan o'ta oladi (pastga qarang)
 - 📊 Excel (barcha tyutorlar) — bitta faylda `Barchasi` varag'i + har bir tyutor uchun alohida varaq
 - 📊 Excel (tyutor bo'yicha) — tanlangan tyutorning to'liq fayli
 
@@ -111,9 +113,17 @@ ma'lumotlarini o'zgartira oladi:
   F.I.SH, telefon, yo'nalish, turar joy, manzil, ota-onasining ismi va raqami, hatto tyutor/guruh.
   Har bir o'zgarish darhol saqlanadi; ✅ **Tayyor** bosilganda tyutor va superadminlarga yangilangan
   karta boradi (bir necha maydon o'zgartirilsa ham **bitta** xabar).
-- 🔄 **Qaytadan ro'yxatdan o'tish** — to'liq jarayonni boshidan o'tish.
-
 Turar joy TTJ ga o'zgartirilsa manzil avtomatik `TTJ` bo'ladi va so'ralmaydi.
+
+**Bir marta ro'yxatdan o'tgan talaba qayta ro'yxatdan o'ta olmaydi** — u faqat tahrirlay oladi.
+Bu tasodifan eski ma'lumotni butunlay almashtirib yuborishdan saqlaydi.
+
+#### 🧪 Test userlar
+
+Jarayonni boshidan sinab ko'rish kerak bo'lsa, superadmin `/test_users` orqali Telegram ID larni
+ro'yxatga qo'shadi (bir nechta bo'lishi mumkin). Shu ro'yxatdagi odam kartasida **ikkala** tugma
+turadi: ✏️ tahrirlash va 🔄 **Qaytadan ro'yxatdan o'tish** — ya'ni to'liq jarayonni xohlagancha
+takrorlay oladi. Ro'yxatdan chiqarilsa, tugma yo'qoladi.
 
 Talaba qayta ro'yxatdan o'tsa, eski ma'lumotlari yangilanadi (tyutorga "ma'lumotlarini yangiladi" xabari boradi).
 `/cancel` yoki ❌ Bekor qilish — istalgan bosqichda jarayonni to'xtatadi.

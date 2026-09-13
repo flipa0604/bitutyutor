@@ -387,3 +387,23 @@ async def test_older_database_gains_the_edited_at_column(tmp_path: Path) -> None
     edited = await db.update_student(100, phone="+998905555555")
     assert edited is not None and edited.edited_at
     await db.close()
+
+
+async def test_test_user_list_prefers_the_live_profile_name(db: Database) -> None:
+    """The stored label is only a fallback for someone who has never pressed /start."""
+    assert await db.add_test_user(500, "Forward orqali olingan ism") is True
+    assert await db.add_test_user(500) is False  # already on the list
+    assert await db.add_test_user(501) is True
+    assert await db.is_test_user(500) and not await db.is_test_user(502)
+
+    listed = {u.telegram_id: u for u in await db.list_test_users()}
+    assert listed[500].name == "Forward orqali olingan ism" and listed[500].username is None
+    assert listed[501].name == ""
+
+    await db.touch_user(500, "tester", "Test Foydalanuvchi")
+    refreshed = {u.telegram_id: u for u in await db.list_test_users()}
+    assert refreshed[500].name == "Test Foydalanuvchi" and refreshed[500].username == "tester"
+
+    assert await db.remove_test_user(500) is True
+    assert await db.remove_test_user(500) is False
+    assert [u.telegram_id for u in await db.list_test_users()] == [501]

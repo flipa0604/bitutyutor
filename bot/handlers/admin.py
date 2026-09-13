@@ -37,7 +37,11 @@ from ..keyboards import (
     ADM_PANEL,
     ADM_SAVE,
     ADM_VIEW,
+    TST_ADD,
+    TST_DELETE,
+    TST_LIST,
     AdminCb,
+    TestCb,
     UsersCb,
     admin_back_kb,
     admin_confirm_delete_kb,
@@ -45,13 +49,14 @@ from ..keyboards import (
     admin_panel_kb,
     admin_save_kb,
     admin_tutor_card_kb,
+    admin_test_users_kb,
     admin_tutor_list_kb,
     admin_users_kb,
     cancel_kb,
     main_menu_kb,
 )
 from ..models import Tutor
-from ..states import AdminTutorAdd, AdminTutorEdit
+from ..states import AdminTestUserAdd, AdminTutorAdd, AdminTutorEdit
 from ..utils import clean_text, edit_or_send, hesc, parse_telegram_id, remove_inline_keyboard, today_str
 from .tutor import send_tutor_workbook
 
@@ -104,6 +109,16 @@ async def _send_saved(bot: Bot, db: Database, settings: Settings, chat_id: int, 
     await bot.send_message(chat_id, await _tutor_card(db, tutor), reply_markup=admin_tutor_card_kb(tutor.id))
 
 
+def _forwarded_user_name(message: Message) -> str:
+    """Display name of a forwarded message's sender, so a new tester is not listed as a bare id."""
+    origin = message.forward_origin
+    if isinstance(origin, MessageOriginUser):
+        return origin.sender_user.full_name
+    if message.forward_from is not None:
+        return message.forward_from.full_name
+    return ""
+
+
 def _telegram_id_from_message(message: Message) -> tuple[int | None, bool]:
     """Extract a Telegram user ID from typed text or a forwarded message.
 
@@ -125,6 +140,66 @@ def _telegram_id_from_message(message: Message) -> tuple[int | None, bool]:
 async def cmd_admin(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(texts.ADMIN_PANEL, reply_markup=admin_panel_kb())
+
+
+async def _test_users_view(db: Database) -> tuple[str, InlineKeyboardMarkup]:
+    users = await db.list_test_users()
+    return texts.test_users_text(users), admin_test_users_kb(users)
+
+
+async def cmd_test_users(message: Message, state: FSMContext, db: Database) -> None:
+    await state.clear()
+    text, markup = await _test_users_view(db)
+    await message.answer(text, reply_markup=markup)
+
+
+async def cb_test_users(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    await state.clear()
+    await callback.answer()
+    text, markup = await _test_users_view(db)
+    await edit_or_send(callback, bot, text, markup)
+
+
+async def cb_add_test_user(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    await state.set_state(AdminTestUserAdd.telegram_id)
+    await callback.answer()
+    await bot.send_message(callback.from_user.id, texts.ASK_TEST_USER_TG, reply_markup=cancel_kb())
+
+
+async def add_test_user_id(
+    message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
+) -> None:
+    telegram_id, hidden = _telegram_id_from_message(message)
+    if hidden:
+        await message.answer(texts.TUTOR_TG_HIDDEN, reply_markup=cancel_kb())
+        return
+    if telegram_id is None:
+        await message.answer(texts.TUTOR_TG_INVALID, reply_markup=cancel_kb())
+        return
+    added = await db.add_test_user(telegram_id, _forwarded_user_name(message))
+    await state.clear()
+    admin_id = message.from_user.id if message.from_user is not None else message.chat.id
+    is_admin, is_tutor = await get_roles(db, settings, admin_id)
+    await message.answer(
+        texts.TEST_USER_ADDED.format(telegram_id=telegram_id) if added else texts.TEST_USER_DUPLICATE,
+        reply_markup=main_menu_kb(is_admin, is_tutor),
+    )
+    if added:
+        log.info("Superadmin %s added test user %s", admin_id, telegram_id)
+    text, markup = await _test_users_view(db)
+    await message.answer(text, reply_markup=markup)
+
+
+async def cb_delete_test_user(
+    callback: CallbackQuery, callback_data: TestCb, state: FSMContext, db: Database, bot: Bot
+) -> None:
+    await state.clear()
+    removed = await db.remove_test_user(callback_data.user_id)
+    await callback.answer(texts.TEST_USER_REMOVED if removed else texts.STALE_BUTTON, show_alert=not removed)
+    if removed:
+        log.info("Superadmin %s removed test user %s", callback.from_user.id, callback_data.user_id)
+    text, markup = await _test_users_view(db)
+    await edit_or_send(callback, bot, text, markup)
 
 
 async def cmd_users(message: Message, state: FSMContext, db: Database) -> None:
@@ -431,11 +506,15 @@ def create_router() -> Router:
     msg.register(cmd_admin, F.text == texts.BTN_ADMIN_PANEL)
     msg.register(cmd_tutors, Command("tutors"))
     msg.register(cmd_users, Command("users"))
+    msg.register(cmd_test_users, Command("test_users"))
     msg.register(cmd_add_tutor, Command("add_tutor"))
     msg.register(cmd_edit_tutor, Command("edit_tutor"))
     msg.register(cmd_delete_tutor, Command("delete_tutor"))
 
     cb.register(cb_users, UsersCb.filter())
+    cb.register(cb_test_users, TestCb.filter(F.action == TST_LIST))
+    cb.register(cb_add_test_user, TestCb.filter(F.action == TST_ADD))
+    cb.register(cb_delete_test_user, TestCb.filter(F.action == TST_DELETE))
     cb.register(cb_panel, AdminCb.filter(F.action == ADM_PANEL))
     cb.register(cb_list, AdminCb.filter(F.action == ADM_LIST))
     cb.register(cb_view, AdminCb.filter(F.action == ADM_VIEW))
@@ -443,6 +522,7 @@ def create_router() -> Router:
     # FSM text steps only take free text: other routers' commands/buttons must fall through to them.
     free_text = IsFreeText()
     cb.register(cb_add_tutor, AdminCb.filter(F.action == ADM_ADD))
+    msg.register(add_test_user_id, AdminTestUserAdd.telegram_id, free_text)
     msg.register(add_tutor_name, AdminTutorAdd.name, free_text)
     msg.register(add_tutor_telegram_id, AdminTutorAdd.telegram_id, free_text)
     cb.register(add_tutor_save, AdminTutorAdd.confirm, AdminCb.filter(F.action == ADM_SAVE))

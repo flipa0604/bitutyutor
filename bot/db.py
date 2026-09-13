@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from .models import RESIDENCE_VALUES, BotUser, Group, Student, Tutor
+from .models import RESIDENCE_VALUES, BotUser, Group, Student, TestUser, Tutor
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS users (
   full_name TEXT NOT NULL DEFAULT '',
   started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   last_start_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS test_users (
+  telegram_id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS tutors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,6 +75,13 @@ SELECT u.*, EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)
 FROM users u
 """
 
+_TEST_USER_SELECT = """
+SELECT t.telegram_id, t.created_at, u.username AS username,
+       COALESCE(NULLIF(u.full_name, ''), t.name) AS name
+FROM test_users t
+LEFT JOIN users u ON u.telegram_id = t.telegram_id
+"""
+
 _BACKFILL_USERS = """
 INSERT OR IGNORE INTO users (telegram_id, username, full_name, started_at, last_start_at)
 SELECT telegram_id, username, full_name, created_at, updated_at FROM students
@@ -107,6 +119,15 @@ def _row_to_tutor(row: aiosqlite.Row) -> Tutor:
 async def _existing_columns(conn: aiosqlite.Connection, table: str) -> set[str]:
     async with conn.execute(f"PRAGMA table_info({table})") as cur:
         return {row["name"] for row in await cur.fetchall()}
+
+
+def _row_to_test_user(row: aiosqlite.Row) -> TestUser:
+    return TestUser(
+        telegram_id=row["telegram_id"],
+        name=row["name"],
+        created_at=row["created_at"],
+        username=row["username"],
+    )
 
 
 def _row_to_bot_user(row: aiosqlite.Row) -> BotUser:
@@ -267,6 +288,27 @@ class Database:
             _USER_SELECT + " ORDER BY u.started_at, u.telegram_id LIMIT ? OFFSET ?", (limit, offset)
         )
         return [_row_to_bot_user(r) for r in rows]
+
+    # -------------------------------------------------------------- test users
+
+    async def add_test_user(self, telegram_id: int, name: str = "") -> bool:
+        """Put a Telegram ID on the tester list. ``False`` when it was already there."""
+        try:
+            await self._write("INSERT INTO test_users (telegram_id, name) VALUES (?, ?)", (telegram_id, name))
+        except DuplicateError:
+            return False
+        return True
+
+    async def remove_test_user(self, telegram_id: int) -> bool:
+        cur = await self._write("DELETE FROM test_users WHERE telegram_id = ?", (telegram_id,))
+        return cur.rowcount > 0
+
+    async def is_test_user(self, telegram_id: int) -> bool:
+        return await self._fetchone("SELECT 1 FROM test_users WHERE telegram_id = ?", (telegram_id,)) is not None
+
+    async def list_test_users(self) -> list[TestUser]:
+        rows = await self._fetchall(_TEST_USER_SELECT + " ORDER BY t.created_at, t.telegram_id")
+        return [_row_to_test_user(r) for r in rows]
 
     # ------------------------------------------------------------------- tutors
 

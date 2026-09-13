@@ -71,7 +71,7 @@ async def register_ttj(
 
     Plain students start with ``/start``; role users must press the register button instead. A
     student who already has a saved row sees their own card first and reopens the flow with the
-    "register again" button.
+    "register again" button -- available to test users only.
     """
     await feed(dp, bot, text_update(user, start_text))
     if already_registered:
@@ -126,8 +126,9 @@ async def test_registration_ttj_path_and_deduplicated_notifications(
     # every callback was answered
     assert len(session.of("AnswerCallbackQuery")) == 3
 
-    # registering again is an update
+    # registering again is an update -- allowed because this student is on the tester list
     session.clear()
+    await db.add_test_user(STUDENT_TG)
     await register_ttj(dp, bot, session, student, tutor.id, group.id, already_registered=True)
     updates = [m for m in session.of("SendMessage") if m.text and m.text.startswith(texts.CARD_TITLE_UPDATE)]
     assert sorted(m.chat_id for m in updates) == [SUPERADMIN_ID, SECOND_SUPERADMIN_ID]
@@ -519,7 +520,7 @@ async def test_group_deleted_mid_registration_restarts(
 # ------------------------------------------------- student edits their data
 
 
-async def test_registered_student_sees_their_card_instead_of_a_new_registration(
+async def test_registered_student_sees_their_card_and_cannot_register_again(
     dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
 ) -> None:
     tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
@@ -532,11 +533,84 @@ async def test_registered_student_sees_their_card_instead_of_a_new_registration(
     card = session.of("SendMessage")[-1]
     assert texts.STUDENT_HOME_TITLE in str(card.text)
     assert "Aliyev Vali G'aniyevich" in str(card.text)
+    assert inline_data(card.reply_markup) == {"edt:open:"}  # editing only, no second registration
+
+    # even a stale "register again" button is refused rather than wiping the record
+    await feed(dp, bot, callback_update(student, "edt:again:"))
+    alerts = [str(getattr(m, "text", "")) for m in session.of("AnswerCallbackQuery")]
+    assert texts.REREGISTER_BLOCKED in alerts
+    assert texts.REG_CHOOSE_TUTOR not in session.sent_texts(STUDENT_TG)
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None and row.full_name == "Aliyev Vali G'aniyevich"
+
+
+async def test_test_user_keeps_both_edit_and_register_again(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_ttj(dp, bot, session, student, tutor.id, group.id)
+    await db.add_test_user(STUDENT_TG)
+    session.clear()
+
+    await feed(dp, bot, text_update(student, "/start"))
+    card = session.of("SendMessage")[-1]
     assert inline_data(card.reply_markup) == {"edt:open:", "edt:again:"}
 
-    # the whole flow is still one button away
     await feed(dp, bot, callback_update(student, "edt:again:"))
     assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
+
+    # removing them from the list takes the button away again
+    await db.remove_test_user(STUDENT_TG)
+    session.clear()
+    await feed(dp, bot, text_update(student, "/start"))
+    assert inline_data(session.of("SendMessage")[-1].reply_markup) == {"edt:open:"}
+
+
+async def test_admin_adds_and_removes_test_users(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    admin = make_user(SUPERADMIN_ID)
+    await feed(dp, bot, text_update(make_user(STUDENT_TG, username="vali"), "/start"))  # known name
+    session.clear()
+
+    await feed(dp, bot, text_update(admin, "/test_users"))
+    empty = session.of("SendMessage")[-1]
+    assert texts.TEST_USERS_EMPTY == str(empty.text)
+    assert "tst:add:0" in inline_data(empty.reply_markup)
+
+    # add two of them, one typed and one that never pressed /start
+    await feed(dp, bot, callback_update(admin, "tst:add:0"))
+    assert session.last_text(SUPERADMIN_ID) == texts.ASK_TEST_USER_TG
+    await feed(dp, bot, text_update(admin, "not an id"))
+    assert session.last_text(SUPERADMIN_ID) == texts.TUTOR_TG_INVALID
+    await feed(dp, bot, text_update(admin, str(STUDENT_TG)))
+    await feed(dp, bot, callback_update(admin, "tst:add:0"), text_update(admin, str(OTHER_TG)))
+
+    listing = str(session.of("SendMessage")[-1].text)
+    assert f"<code>{STUDENT_TG}</code>" in listing and f"<code>{OTHER_TG}</code>" in listing
+    assert "Test @vali" in listing  # the name comes from the users table
+    assert await db.is_test_user(STUDENT_TG) and await db.is_test_user(OTHER_TG)
+
+    # adding the same id twice changes nothing
+    session.clear()
+    await feed(dp, bot, callback_update(admin, "tst:add:0"), text_update(admin, str(STUDENT_TG)))
+    assert texts.TEST_USER_DUPLICATE in session.sent_texts(SUPERADMIN_ID)
+    assert len(await db.list_test_users()) == 2
+
+    # tapping a tester removes them
+    session.clear()
+    await feed(dp, bot, callback_update(admin, f"tst:delete:{OTHER_TG}"))
+    assert [u.telegram_id for u in await db.list_test_users()] == [STUDENT_TG]
+    assert f"<code>{OTHER_TG}</code>" not in session.sent_texts(SUPERADMIN_ID)[-1]
+
+
+async def test_test_users_command_is_refused_for_non_admins(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    await feed(dp, bot, text_update(make_user(STUDENT_TG), "/test_users"))
+    assert session.last_text(STUDENT_TG) == texts.ADMIN_ONLY
 
 
 async def test_mydata_starts_registration_when_nothing_is_saved(

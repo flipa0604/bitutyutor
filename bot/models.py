@@ -28,6 +28,20 @@ class BotUser:
 
 
 @dataclass(frozen=True, slots=True)
+class TestUser:
+    """A Telegram ID allowed to run the registration flow again after it already has a row.
+
+    ``name`` and ``username`` are looked up from the ``users`` table when that person has ever
+    pressed /start, so the admin list stays readable without asking for a label.
+    """
+
+    telegram_id: int
+    name: str
+    created_at: str
+    username: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Group:
     id: int
     tutor_id: int

@@ -14,6 +14,10 @@ class AdminTutorEdit(StatesGroup):
     telegram_id = State()
 
 
+class AdminTestUserAdd(StatesGroup):
+    telegram_id = State()
+
+
 class TutorGroupAdd(StatesGroup):
     name = State()
 

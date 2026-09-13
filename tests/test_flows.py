@@ -354,7 +354,8 @@ async def register(
     """Drive the registration FSM step by step, asserting each prompt as SPEC §8 describes it.
 
     A student who already has a saved row lands on their own card, so the flow is reopened with the
-    "register again" button instead of starting straight from the tutor picker.
+    "register again" button instead of starting straight from the tutor picker -- which only works
+    for a test user, since nobody else is allowed to overwrite a finished registration.
     """
     uid = user.id
     await h.feed(text_update(user, start_text))
@@ -1200,6 +1201,7 @@ async def test_reregistration_updates_instead_of_duplicating(h: Harness) -> None
     assert h.cards(texts.CARD_TITLE_NEW) == Counter({TUTOR: 1, SUPERADMIN: 1, BOTH: 1})
     h.clear()
 
+    await h.db.add_test_user(STUDENT)  # only testers may run the flow a second time
     await register(
         h,
         student,
@@ -1525,6 +1527,7 @@ async def test_setup_bot_commands_scopes(h: Harness) -> None:
         "admin",
         "tutors",
         "users",
+        "test_users",
         "add_tutor",
         "edit_tutor",
         "delete_tutor",

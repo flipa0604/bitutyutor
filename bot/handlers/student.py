@@ -443,7 +443,12 @@ async def show_student_home(bot: Bot, user_id: int, state: FSMContext, db: Datab
         return False
     await state.clear()
     card = texts.student_card(texts.STUDENT_HOME_TITLE, student)
-    await bot.send_message(user_id, f"{card}\n\n{texts.STUDENT_HOME_HINT}", reply_markup=student_home_kb())
+    can_reregister = await db.is_test_user(user_id)
+    await bot.send_message(
+        user_id,
+        f"{card}\n\n{texts.STUDENT_HOME_HINT}",
+        reply_markup=student_home_kb(can_reregister),
+    )
     return True
 
 
@@ -505,9 +510,14 @@ async def edit_open(callback: CallbackQuery, state: FSMContext, db: Database, bo
 
 
 async def edit_reregister(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    """Run the whole flow again. Only testers may: for anyone else it would overwrite a real record."""
+    user_id = callback.from_user.id
+    if await db.get_student_by_telegram_id(user_id) is not None and not await db.is_test_user(user_id):
+        await callback.answer(texts.REREGISTER_BLOCKED, show_alert=True)
+        return
     await callback.answer()
     await remove_inline_keyboard(callback)
-    await start_registration(bot, callback.from_user.id, state, db)
+    await start_registration(bot, user_id, state, db)
 
 
 async def edit_done(

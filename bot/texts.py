@@ -6,7 +6,7 @@ import re
 
 from collections.abc import Sequence
 
-from .models import BotUser, Student, Tutor
+from .models import BotUser, Student, TestUser, Tutor
 from .utils import clean_text, hesc
 
 # ----------------------------------------------------------------- buttons
@@ -29,6 +29,8 @@ BTN_RES_UY = "🏡 O'zimning uyimda"
 BTN_ADMIN_TUTORS = "👨‍🏫 Tyutorlar ro'yxati"
 BTN_ADMIN_ADD_TUTOR = "➕ Tyutor qo'shish"
 BTN_ADMIN_USERS = "👥 Foydalanuvchilar"
+BTN_ADMIN_TEST_USERS = "🧪 Test userlar"
+BTN_ADD_TEST_USER = "➕ Test user qo'shish"
 BTN_ADMIN_EXCEL_ALL = "📊 Excel (barcha tyutorlar)"
 BTN_ADMIN_EXCEL_PICK = "📊 Excel (tyutor bo'yicha)"
 BTN_EDIT_NAME = "✏️ Ismini o'zgartirish"
@@ -116,6 +118,7 @@ HELP_ADMIN = (
     "/admin — admin panel\n"
     "/tutors — tyutorlar ro'yxati\n"
     "/users — botni ishga tushirgan barcha foydalanuvchilar\n"
+    "/test_users — qayta ro'yxatdan o'ta oladigan test userlar\n"
     "/add_tutor — tyutor qo'shish\n"
     "/edit_tutor — tyutorni tahrirlash\n"
     "/delete_tutor — tyutorni o'chirish"
@@ -191,6 +194,22 @@ TUTOR_CARD = (
 )
 
 
+TEST_USERS_INTRO = (
+    "🧪 <b>Test userlar</b>\n\n"
+    "Bu ro'yxatdagilar ro'yxatdan o'tgandan keyin ham <b>qaytadan</b> ro'yxatdan o'ta oladi — "
+    "jarayonni sinab ko'rish uchun. Qolgan hamma faqat ma'lumotlarini tahrirlay oladi."
+)
+TEST_USERS_EMPTY = TEST_USERS_INTRO + "\n\nRo'yxat hozircha bo'sh."
+TEST_USERS_LIST = TEST_USERS_INTRO + "\n\nHozir ro'yxatda {n} ta:\n{lines}\n\nO'chirish uchun ustiga bosing."
+ASK_TEST_USER_TG = (
+    "🆔 Test userning Telegram ID sini kiriting (musbat butun son).\n\n"
+    "Yoki uning istalgan xabarini shu yerga <i>forward</i> qiling — ID avtomatik o'qiladi."
+)
+TEST_USER_ADDED = "✅ Test userlar ro'yxatiga qo'shildi: <code>{telegram_id}</code>"
+TEST_USER_DUPLICATE = "❗️ Bu ID allaqachon test userlar ro'yxatida."
+TEST_USER_REMOVED = "🗑 Test userlar ro'yxatidan olib tashlandi."
+REREGISTER_BLOCKED = "Siz allaqachon ro'yxatdan o'tgansiz. Ma'lumotlaringizni tahrirlash tugmasi orqali o'zgartiring."
+
 USERS_EMPTY = "📭 Hozircha hech kim botni ishga tushirmagan."
 USERS_TITLE = (
     "👥 <b>Bot foydalanuvchilari</b>\n\n"
@@ -198,6 +217,22 @@ USERS_TITLE = (
     "🕗 o'tmagan: <b>{pending}</b> ta\n"
     "📄 {page}/{pages}-sahifa"
 )
+
+
+def test_user_line(user: TestUser) -> str:
+    username = f" @{hesc(user.username)}" if user.username else ""
+    name = hesc(user.name) or "nomsiz"
+    return f"• {name}{username} — <code>{user.telegram_id}</code>"
+
+
+def test_users_text(users: Sequence[TestUser]) -> str:
+    if not users:
+        return TEST_USERS_EMPTY
+    return TEST_USERS_LIST.format(n=len(users), lines="\n".join(test_user_line(u) for u in users))
+
+
+def test_user_button_label(user: TestUser) -> str:
+    return f"🗑 {user.name or user.telegram_id} ({user.telegram_id})"
 
 
 def user_line(index: int, user: BotUser) -> str:
