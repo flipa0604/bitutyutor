@@ -103,15 +103,18 @@ class Database:
     """Async wrapper around a single aiosqlite connection.
 
     Handlers run concurrently (aiogram dispatches every update as its own task) but share this one
-    connection, which uses sqlite3's implicit transactions. Mutations are therefore serialised with
-    ``_write_lock``: without it a ``rollback()`` issued for one coroutine's failed INSERT would also
-    discard another coroutine's not-yet-committed statement.
+    connection, which uses sqlite3's implicit transactions. Every statement is therefore serialised
+    with ``_lock``, because a ``commit()``/``rollback()`` on this connection hits whatever any other
+    coroutine has in flight: it would discard another coroutine's not-yet-committed write, and it
+    also invalidates a cursor opened by a concurrent read, which fails between ``execute()`` and
+    ``fetchone()`` with "Cursor needed to be reset because of commit/rollback". Callers that already
+    hold the lock use the ``*_unlocked`` helpers -- ``asyncio.Lock`` is not reentrant.
     """
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._conn: aiosqlite.Connection | None = None
-        self._write_lock = asyncio.Lock()
+        self._lock = asyncio.Lock()
 
     @property
     def conn(self) -> aiosqlite.Connection:
@@ -140,20 +143,26 @@ class Database:
     # ------------------------------------------------------------------ helpers
 
     async def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Row | None:
+        async with self._lock:
+            return await self._fetchone_unlocked(sql, params)
+
+    async def _fetchone_unlocked(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Row | None:
+        """``_fetchone`` body for callers that already hold ``_lock``."""
         async with self.conn.execute(sql, params) as cur:
             return await cur.fetchone()
 
     async def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
-        async with self.conn.execute(sql, params) as cur:
-            return list(await cur.fetchall())
+        async with self._lock:
+            async with self.conn.execute(sql, params) as cur:
+                return list(await cur.fetchall())
 
     async def _write(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Cursor:
         """Execute a mutating statement and commit; translate UNIQUE violations to DuplicateError."""
-        async with self._write_lock:
+        async with self._lock:
             return await self._write_unlocked(sql, params)
 
     async def _write_unlocked(self, sql: str, params: tuple[Any, ...] = ()) -> aiosqlite.Cursor:
-        """``_write`` body for callers that already hold ``_write_lock``."""
+        """``_write`` body for callers that already hold ``_lock``."""
         try:
             cur = await self.conn.execute(sql, params)
             await self.conn.commit()
@@ -264,10 +273,11 @@ class Database:
         group = await self.get_group(group_id)
         if group is None or group.tutor_id != tutor_id:
             raise ValueError("Group does not exist or does not belong to the tutor")
-        async with self._write_lock:
+        async with self._lock:
             # The existence check and the write must not interleave with another upsert of the same
             # student, otherwise both callers would report a brand-new registration.
-            is_update = await self.get_student_by_telegram_id(telegram_id) is not None
+            row = await self._fetchone_unlocked("SELECT 1 FROM students WHERE telegram_id = ?", (telegram_id,))
+            is_update = row is not None
             await self._write_unlocked(
                 """
                 INSERT INTO students (
