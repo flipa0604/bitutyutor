@@ -1,0 +1,8 @@
+# Serverda ishlaydigan fayllar har doim LF bilan saqlansin — Windowsdan CRLF bilan
+# commit qilinsa, Linuxda `bash: \r: command not found` xatosi chiqadi.
+*.sh      text eol=lf
+*.service text eol=lf
+*.py      text eol=lf
+*.md      text eol=lf
+.env.example text eol=lf
+requirements.txt text eol=lf

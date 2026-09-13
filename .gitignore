@@ -1,0 +1,19 @@
+# Secrets & runtime data
+.env
+data/
+*.db
+*.db-journal
+*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+.ruff_cache/

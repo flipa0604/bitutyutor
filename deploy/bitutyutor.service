@@ -1,0 +1,21 @@
+# BITU Tyutor Bot uchun systemd unit shabloni.
+# __APP_DIR__ va __USER__ ni deploy/install.sh avtomatik almashtiradi.
+# Sozlamalar .env dan o'qiladi (bot/config.py python-dotenv orqali yuklaydi).
+[Unit]
+Description=BITU Tyutor Bot (Telegram, aiogram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/venv/bin/python __APP_DIR__/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bitutyutor
+
+[Install]
+WantedBy=multi-user.target
