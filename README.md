@@ -17,7 +17,7 @@ bo'lsa ham faqat **bitta** xabar oladi).
 
 ## O'rnatish
 
-Talablar: Python 3.11+.
+Talablar: Python 3.10+ (serverda 3.10.12 da sinalgan).
 
 ```bash
 python -m venv .venv
