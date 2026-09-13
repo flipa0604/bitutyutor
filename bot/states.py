@@ -35,3 +35,19 @@ class Registration(StatesGroup):
     mother_name = State()
     mother_phone = State()
     confirm = State()
+
+
+class StudentEdit(StatesGroup):
+    """Editing an already saved registration, one field at a time.
+
+    ``value`` is shared by every free-text field; which one is being edited lives in the FSM data
+    under ``field`` (see ``EDIT_FIELDS`` in ``bot.handlers.student``). Residence and the tutor/group
+    pair need their own keyboards, so they keep dedicated states.
+    """
+
+    menu = State()
+    value = State()
+    residence = State()
+    address = State()
+    choose_tutor = State()
+    choose_group = State()

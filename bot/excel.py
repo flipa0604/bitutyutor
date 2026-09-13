@@ -37,8 +37,9 @@ HEADERS: tuple[str, ...] = (
     "Telegram username",
     "Telegram ID",
     "Ro'yxatdan o'tgan vaqt",
+    "Oxirgi tahrir",
 )
-COLUMN_WIDTHS: tuple[int, ...] = (5, 32, 16, 24, 26, 16, 12, 36, 32, 16, 32, 16, 20, 14, 20)
+COLUMN_WIDTHS: tuple[int, ...] = (5, 32, 16, 24, 26, 16, 12, 36, 32, 16, 32, 16, 20, 14, 20, 20)
 _TEXT_COLUMNS = {3, 10, 12}  # 1-based indexes of phone columns; forced to text format
 
 _INVALID_SHEET_CHARS_RE = re.compile(r"[\[\]:*?/\\]")
@@ -103,6 +104,9 @@ def _fill_sheet(ws: Worksheet, students: Sequence[StudentRow]) -> None:
                 f"@{s.username}" if s.username else None,
                 s.telegram_id,
                 s.created_at,
+                # NULL until the data is changed for the first time, so a filled cell means
+                # "edited since registration" at a glance.
+                s.edited_at,
             ]
         )
         row = ws[index + 1]

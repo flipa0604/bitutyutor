@@ -1,9 +1,10 @@
-"""Database layer: tutor/group CRUD, uniqueness, cascades, student upsert and list filters."""
+"""Database layer: tutor/group CRUD, uniqueness, cascades, student upsert/edit, users and filters."""
 
 from __future__ import annotations
 
 import asyncio
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -243,3 +244,146 @@ async def test_init_is_idempotent_and_creates_parent_dir(tmp_path: Any) -> None:
     await database.close()
     with pytest.raises(RuntimeError):
         _ = database.conn
+
+
+# --------------------------------------------------- editing a saved student
+
+
+async def test_update_student_writes_only_the_given_fields(db: Database) -> None:
+    tutor = await db.add_tutor("T", 1)
+    group = await db.add_group(tutor.id, "G")
+    student, _ = await db.upsert_student(**student_kwargs(100, tutor.id, group.id))
+
+    edited = await db.update_student(100, phone="+998905555555", full_name="Yangi Ism")
+    assert edited is not None
+    assert edited.phone == "+998905555555" and edited.full_name == "Yangi Ism"
+    assert edited.direction == student.direction  # untouched columns survive
+    assert edited.id == student.id and edited.created_at == student.created_at
+    assert edited.updated_at >= student.updated_at
+    assert await db.get_student_by_telegram_id(100) == edited
+    assert len(await db.list_students()) == 1
+
+
+async def test_update_student_moves_the_row_to_another_tutor_and_group(db: Database) -> None:
+    first = await db.add_tutor("T1", 1)
+    second = await db.add_tutor("T2", 2)
+    g1 = await db.add_group(first.id, "G1")
+    g2 = await db.add_group(second.id, "G2")
+    await db.upsert_student(**student_kwargs(100, first.id, g1.id))
+
+    edited = await db.update_student(100, tutor_id=second.id, group_id=g2.id)
+    assert edited is not None
+    assert edited.tutor_id == second.id and edited.tutor_name == "T2"
+    assert edited.group_id == g2.id and edited.group_name == "G2"
+    assert await db.count_group_students(g1.id) == 0
+    assert await db.count_group_students(g2.id) == 1
+    assert await db.count_tutor_groups_and_students(first.id) == (1, 0)
+
+
+async def test_update_student_rejects_bad_input_and_missing_rows(db: Database) -> None:
+    tutor = await db.add_tutor("T", 1)
+    group = await db.add_group(tutor.id, "G")
+    await db.upsert_student(**student_kwargs(100, tutor.id, group.id))
+
+    assert await db.update_student(999, phone="+998905555555") is None  # nobody registered under 999
+    with pytest.raises(ValueError):
+        await db.update_student(100)
+    for immutable in ("created_at", "updated_at", "telegram_id", "id", "nope"):
+        with pytest.raises(ValueError, match="editable"):
+            await db.update_student(100, **{immutable: "x"})
+    with pytest.raises(ValueError, match="residence"):
+        await db.update_student(100, residence="qasr")
+    unchanged = await db.get_student_by_telegram_id(100)
+    assert unchanged is not None and unchanged.phone == "+998901234567"
+
+
+# ------------------------------------------------------------------- users
+
+
+async def test_users_are_recorded_refreshed_and_paged(db: Database) -> None:
+    tutor = await db.add_tutor("T", 1)
+    group = await db.add_group(tutor.id, "G")
+    await db.touch_user(300, "vali", "Vali Aliyev")
+    await db.touch_user(301, None, "Nomsiz Kishi")
+    assert await db.count_users() == (2, 0)
+
+    await db.upsert_student(**student_kwargs(300, tutor.id, group.id))
+    assert await db.count_users() == (2, 1)
+
+    users = await db.list_users(10)
+    assert [u.telegram_id for u in users] == [300, 301]  # oldest first
+    assert (users[0].is_student, users[1].is_student) == (True, False)
+    assert users[0].username == "vali" and users[1].username is None
+
+    # a second /start refreshes the profile instead of inserting a duplicate
+    await db.touch_user(300, "vali_new", "Vali Aliyev Yangi")
+    assert await db.count_users() == (2, 1)
+    again = await db.list_users(10)
+    assert again[0].username == "vali_new" and again[0].full_name == "Vali Aliyev Yangi"
+    assert again[0].started_at == users[0].started_at
+
+    assert [u.telegram_id for u in await db.list_users(1)] == [300]
+    assert [u.telegram_id for u in await db.list_users(1, 1)] == [301]
+    assert await db.list_users(10, 5) == []
+
+
+async def test_students_saved_before_the_users_table_are_backfilled(tmp_path: Path) -> None:
+    """A database written before /users existed still lists everyone who had registered."""
+    first = Database(tmp_path / "backfill.db")
+    await first.init()
+    tutor = await first.add_tutor("T", 1)
+    group = await first.add_group(tutor.id, "G")
+    await first.upsert_student(**student_kwargs(100, tutor.id, group.id))
+    await first.conn.execute("DELETE FROM users")  # as if the table had just been added
+    await first.conn.commit()
+    assert await first.count_users() == (0, 0)
+    await first.close()
+
+    reopened = Database(tmp_path / "backfill.db")
+    await reopened.init()
+    assert await reopened.count_users() == (1, 1)
+    listed = await reopened.list_users(10)
+    assert [u.telegram_id for u in listed] == [100]
+    assert listed[0].is_student and listed[0].username == "user100"
+    await reopened.close()
+
+
+async def test_older_database_gains_the_edited_at_column(tmp_path: Path) -> None:
+    """A database written before ``edited_at`` existed is migrated on the next start."""
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE students (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          telegram_id INTEGER NOT NULL UNIQUE,
+          username TEXT,
+          tutor_id INTEGER NOT NULL,
+          group_id INTEGER NOT NULL,
+          full_name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          direction TEXT NOT NULL,
+          residence TEXT NOT NULL,
+          address TEXT NOT NULL,
+          father_name TEXT NOT NULL,
+          father_phone TEXT NOT NULL,
+          mother_name TEXT NOT NULL,
+          mother_phone TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        """
+    )
+    legacy.close()
+
+    db = Database(path)
+    await db.init()
+    tutor = await db.add_tutor("T", 1)
+    group = await db.add_group(tutor.id, "G")
+    await db.upsert_student(**student_kwargs(100, tutor.id, group.id))
+    fresh = await db.get_student_by_telegram_id(100)
+    assert fresh is not None and fresh.edited_at is None
+
+    edited = await db.update_student(100, phone="+998905555555")
+    assert edited is not None and edited.edited_at
+    await db.close()

@@ -16,6 +16,18 @@ class Tutor:
 
 
 @dataclass(frozen=True, slots=True)
+class BotUser:
+    """Someone who has pressed /start, whether or not they finished registering."""
+
+    telegram_id: int
+    username: str | None
+    full_name: str
+    started_at: str
+    last_start_at: str
+    is_student: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class Group:
     id: int
     tutor_id: int
@@ -42,5 +54,7 @@ class Student:
     mother_phone: str
     created_at: str
     updated_at: str
+    edited_at: str | None = None
+    """When the data was last changed after registration; ``None`` while it never was."""
     tutor_name: str = ""
     group_name: str = ""

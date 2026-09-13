@@ -3,25 +3,34 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, User
 
 from .. import texts
 from ..config import Settings
 from ..db import Database
-from ..filters import get_roles
+from ..filters import IsFreeText, get_roles
 from ..keyboards import (
+    EDT_DONE,
+    EDT_FIELD,
+    EDT_OPEN,
+    EDT_REREGISTER,
+    EDT_RESIDENCE,
+    EDT_TUTOR_GROUP,
     REG_BACK,
     REG_CANCEL,
     REG_CONFIRM,
     REG_GROUP,
     REG_RESTART,
     REG_TUTOR,
+    EditCb,
     RegCb,
     cancel_kb,
     main_menu_kb,
@@ -30,9 +39,11 @@ from ..keyboards import (
     reg_group_list_kb,
     reg_tutor_list_kb,
     residence_kb,
+    student_edit_field_kb,
+    student_home_kb,
 )
-from ..models import Group, Student, Tutor
-from ..states import Registration
+from ..models import RESIDENCE_VALUES, Group, Student, Tutor
+from ..states import Registration, StudentEdit
 from ..utils import (
     clean_text,
     edit_or_send,
@@ -152,6 +163,8 @@ async def _show_preview(message: Message, state: FSMContext, db: Database, bot: 
 
 
 async def register_button(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
+    if message.from_user is not None and await show_student_home(bot, message.from_user.id, state, db):
+        return
     await start_registration(bot, message.chat.id, state, db)
 
 
@@ -373,6 +386,302 @@ async def reg_confirm(callback: CallbackQuery, state: FSMContext, db: Database, 
     await notify_registration(bot, settings, tutor, student, is_update)
 
 
+# ------------------------------------------------- editing a saved registration
+
+
+def _strip(text: str | None) -> str:
+    return (text or "").strip()
+
+
+@dataclass(frozen=True, slots=True)
+class _EditField:
+    """One free-text student column: what to ask, what to say when it is wrong, how to check it."""
+
+    prompt: str
+    invalid: str
+    validate: Callable[[str | None], bool]
+    clean: Callable[[str | None], str]
+
+
+EDIT_FIELDS: dict[str, _EditField] = {
+    "full_name": _EditField(texts.REG_ASK_FULL_NAME, texts.REG_NAME_INVALID, is_valid_name, clean_text),
+    "phone": _EditField(texts.REG_ASK_PHONE, texts.REG_PHONE_INVALID, is_valid_phone, _strip),
+    "direction": _EditField(
+        texts.REG_ASK_DIRECTION,
+        texts.REG_DIRECTION_INVALID,
+        lambda t: is_valid_length(t, DIRECTION_MIN, DIRECTION_MAX),
+        clean_text,
+    ),
+    "address": _EditField(
+        texts.REG_ASK_ADDRESS,
+        texts.REG_ADDRESS_INVALID,
+        lambda t: is_valid_length(t, ADDRESS_MIN, ADDRESS_MAX),
+        clean_text,
+    ),
+    "father_name": _EditField(texts.REG_ASK_FATHER_NAME, texts.REG_NAME_INVALID, is_valid_name, clean_text),
+    "father_phone": _EditField(texts.REG_ASK_FATHER_PHONE, texts.REG_PARENT_PHONE_INVALID, is_valid_phone, _strip),
+    "mother_name": _EditField(texts.REG_ASK_MOTHER_NAME, texts.REG_NAME_INVALID, is_valid_name, clean_text),
+    "mother_phone": _EditField(texts.REG_ASK_MOTHER_PHONE, texts.REG_PARENT_PHONE_INVALID, is_valid_phone, _strip),
+}
+"""Columns the student may retype, keyed by their ``students`` column name. Residence and the
+tutor/group pair are not here: they are picked from keyboards, not typed."""
+
+
+def _prompt_kb(field_name: str) -> Any:
+    """The phone step offers the contact button; every other field just needs a way out."""
+    return phone_kb() if field_name == "phone" else cancel_kb()
+
+
+async def show_student_home(bot: Bot, user_id: int, state: FSMContext, db: Database) -> bool:
+    """Show a registered student their own card plus the self-service buttons.
+
+    Returns ``False`` without sending anything when nothing is saved for this user yet, so the
+    caller can decide how to open the registration flow instead.
+    """
+    student = await db.get_student_by_telegram_id(user_id)
+    if student is None:
+        return False
+    await state.clear()
+    card = texts.student_card(texts.STUDENT_HOME_TITLE, student)
+    await bot.send_message(user_id, f"{card}\n\n{texts.STUDENT_HOME_HINT}", reply_markup=student_home_kb())
+    return True
+
+
+async def _registration_gone(bot: Bot, user_id: int, state: FSMContext, db: Database) -> None:
+    """The row vanished mid-edit (the tutor or group was deleted and cascaded): start over."""
+    await state.clear()
+    await bot.send_message(user_id, texts.EDIT_GONE, reply_markup=ReplyKeyboardRemove())
+    await start_registration(bot, user_id, state, db)
+
+
+async def _show_edit_menu(bot: Bot, user_id: int, state: FSMContext, db: Database) -> None:
+    """(Re)draw the field picker under the student's current card."""
+    student = await db.get_student_by_telegram_id(user_id)
+    if student is None:
+        await _registration_gone(bot, user_id, state, db)
+        return
+    await state.set_state(StudentEdit.menu)
+    card = texts.student_card(texts.STUDENT_HOME_TITLE, student)
+    await bot.send_message(
+        user_id,
+        f"{card}\n\n{texts.EDIT_MENU}",
+        reply_markup=student_edit_field_kb(student.residence),
+    )
+
+
+async def _apply_edit(
+    bot: Bot, user_id: int, state: FSMContext, db: Database, settings: Settings, **fields: Any
+) -> None:
+    """Persist one edit, remember that something changed and return to the field picker.
+
+    The confirmation carries the user's normal reply keyboard because the step that was just
+    answered replaced it with a cancel/contact keyboard.
+    """
+    student = await db.update_student(user_id, **fields)
+    if student is None:
+        await _registration_gone(bot, user_id, state, db)
+        return
+    await state.update_data(changed=True)
+    await bot.send_message(user_id, texts.EDIT_SAVED, reply_markup=await _finish_markup(db, settings, user_id))
+    await _show_edit_menu(bot, user_id, state, db)
+
+
+# ------------------------------------------------------ edit: entry points
+
+
+async def cmd_mydata(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
+    if message.from_user is None:
+        return
+    if await show_student_home(bot, message.from_user.id, state, db):
+        return
+    await message.answer(texts.STUDENT_NOT_REGISTERED, reply_markup=ReplyKeyboardRemove())
+    await start_registration(bot, message.chat.id, state, db)
+
+
+async def edit_open(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    await _show_edit_menu(bot, callback.from_user.id, state, db)
+
+
+async def edit_reregister(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    await start_registration(bot, callback.from_user.id, state, db)
+
+
+async def edit_done(
+    callback: CallbackQuery, state: FSMContext, db: Database, settings: Settings, bot: Bot
+) -> None:
+    """Leave the edit menu and, if anything was saved, send the fresh card to tutor + superadmins."""
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    changed = bool(data.get("changed"))
+    await state.clear()
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    student = await db.get_student_by_telegram_id(user_id)
+    if student is None:
+        await _registration_gone(bot, user_id, state, db)
+        return
+    await bot.send_message(
+        user_id,
+        texts.EDIT_DONE if changed else texts.EDIT_NOTHING_CHANGED,
+        reply_markup=await _finish_markup(db, settings, user_id),
+    )
+    if not changed:
+        return
+    tutor = await db.get_tutor(student.tutor_id)
+    if tutor is not None:
+        log.info("Student %s edited their data (tutor=%s, group=%s)", user_id, student.tutor_id, student.group_id)
+        await notify_registration(bot, settings, tutor, student, True)
+
+
+# ---------------------------------------------------------- edit: one field
+
+
+async def edit_pick_field(
+    callback: CallbackQuery, callback_data: EditCb, state: FSMContext, db: Database, bot: Bot
+) -> None:
+    field = EDIT_FIELDS.get(callback_data.field)
+    if field is None:
+        await callback.answer(texts.STALE_BUTTON, show_alert=True)
+        return
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    await state.update_data(field=callback_data.field)
+    await state.set_state(StudentEdit.value)
+    await bot.send_message(callback.from_user.id, field.prompt, reply_markup=_prompt_kb(callback_data.field))
+
+
+async def edit_value(
+    message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
+) -> None:
+    data = await state.get_data()
+    name = str(data.get("field") or "")
+    field = EDIT_FIELDS.get(name)
+    if field is None or message.from_user is None:  # FSM data lost (e.g. a restart): redraw the menu
+        await _show_edit_menu(bot, message.chat.id, state, db)
+        return
+    value: str | None = None
+    if name == "phone" and message.contact is not None:
+        if message.contact.user_id != message.from_user.id:
+            await message.answer(texts.REG_CONTACT_NOT_OWN, reply_markup=phone_kb())
+            return
+        value = normalize_phone(message.contact.phone_number)
+    elif field.validate(message.text):
+        value = field.clean(message.text)
+    if value is None:
+        await message.answer(field.invalid, reply_markup=_prompt_kb(name))
+        return
+    await _apply_edit(bot, message.from_user.id, state, db, settings, **{name: value})
+
+
+# ----------------------------------------------------------- edit: residence
+
+
+async def edit_pick_residence(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    await state.set_state(StudentEdit.residence)
+    await bot.send_message(callback.from_user.id, texts.REG_ASK_RESIDENCE, reply_markup=residence_kb())
+
+
+async def edit_residence(
+    message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
+) -> None:
+    residence = texts.parse_residence(message.text)
+    if residence is None:
+        await message.answer(texts.REG_RESIDENCE_INVALID, reply_markup=residence_kb())
+        return
+    if message.from_user is None:
+        return
+    if residence == "ttj":  # same rule as registration: the dormitory needs no street address
+        await _apply_edit(bot, message.from_user.id, state, db, settings, residence="ttj", address="TTJ")
+        return
+    await state.update_data(residence=residence)
+    await state.set_state(StudentEdit.address)
+    await message.answer(texts.REG_ASK_ADDRESS, reply_markup=cancel_kb())
+
+
+async def edit_residence_address(
+    message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
+) -> None:
+    """Address typed right after a non-TTJ residence: both columns are saved together."""
+    if not is_valid_length(message.text, ADDRESS_MIN, ADDRESS_MAX):
+        await message.answer(texts.REG_ADDRESS_INVALID, reply_markup=cancel_kb())
+        return
+    data = await state.get_data()
+    residence = str(data.get("residence") or "")
+    if residence not in RESIDENCE_VALUES or message.from_user is None:
+        await _show_edit_menu(bot, message.chat.id, state, db)
+        return
+    await _apply_edit(
+        bot, message.from_user.id, state, db, settings, residence=residence, address=clean_text(message.text)
+    )
+
+
+# -------------------------------------------------------- edit: tutor/group
+
+
+async def edit_pick_tutor_group(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    tutors = await db.list_tutors()
+    if not tutors:
+        await callback.answer(texts.REG_NO_TUTORS, show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(StudentEdit.choose_tutor)
+    await edit_or_send(callback, bot, texts.EDIT_ASK_TUTOR, reg_tutor_list_kb(tutors))
+
+
+async def edit_choose_tutor(
+    callback: CallbackQuery, callback_data: RegCb, state: FSMContext, db: Database, bot: Bot
+) -> None:
+    tutor = await db.get_tutor(callback_data.id)
+    if tutor is None:
+        await callback.answer(texts.REG_TUTOR_NOT_FOUND, show_alert=True)
+        await remove_inline_keyboard(callback)
+        await _show_edit_menu(bot, callback.from_user.id, state, db)
+        return
+    await state.update_data(tutor_id=tutor.id)
+    await state.set_state(StudentEdit.choose_group)
+    await callback.answer()
+    groups = await db.list_groups(tutor.id)
+    text = texts.EDIT_ASK_GROUP if groups else texts.REG_TUTOR_NO_GROUPS
+    await edit_or_send(callback, bot, text, reg_group_list_kb(groups))
+
+
+async def edit_back_to_tutors(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
+    tutors = await db.list_tutors()
+    if not tutors:
+        await callback.answer(texts.REG_NO_TUTORS, show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(StudentEdit.choose_tutor)
+    await edit_or_send(callback, bot, texts.EDIT_ASK_TUTOR, reg_tutor_list_kb(tutors))
+
+
+async def edit_choose_group(
+    callback: CallbackQuery,
+    callback_data: RegCb,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    bot: Bot,
+) -> None:
+    data = await state.get_data()
+    group = await db.get_group(callback_data.id)
+    tutor = await db.get_tutor(int(data.get("tutor_id") or 0))
+    if group is None or tutor is None or group.tutor_id != tutor.id:
+        await callback.answer(texts.REG_GROUP_NOT_FOUND, show_alert=True)
+        await remove_inline_keyboard(callback)
+        await _show_edit_menu(bot, callback.from_user.id, state, db)
+        return
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    await _apply_edit(bot, callback.from_user.id, state, db, settings, tutor_id=tutor.id, group_id=group.id)
+
+
 # ------------------------------------------------------------- registration
 
 
@@ -381,8 +690,10 @@ def create_router() -> Router:
     router = Router(name="student")
     msg = router.message
     cb = router.callback_query
+    free_text = IsFreeText()
 
     msg.register(register_button, F.text == texts.BTN_REGISTER)
+    msg.register(cmd_mydata, Command("mydata"))
     cb.register(reg_cancel, RegCb.filter(F.action == REG_CANCEL))
     cb.register(reg_restart, StateFilter(Registration), RegCb.filter(F.action == REG_RESTART))
 
@@ -405,4 +716,24 @@ def create_router() -> Router:
     msg.register(reg_mother_phone, Registration.mother_phone)
 
     cb.register(reg_confirm, Registration.confirm, RegCb.filter(F.action == REG_CONFIRM))
+
+    # Self-service editing. The tutor/group pickers reuse the registration keyboards (and therefore
+    # ``RegCb``); the state filter is what keeps the two flows apart.
+    cb.register(edit_open, EditCb.filter(F.action == EDT_OPEN))
+    cb.register(edit_reregister, EditCb.filter(F.action == EDT_REREGISTER))
+    cb.register(edit_pick_field, StudentEdit.menu, EditCb.filter(F.action == EDT_FIELD))
+    cb.register(edit_pick_residence, StudentEdit.menu, EditCb.filter(F.action == EDT_RESIDENCE))
+    cb.register(edit_pick_tutor_group, StudentEdit.menu, EditCb.filter(F.action == EDT_TUTOR_GROUP))
+    cb.register(edit_done, StudentEdit.menu, EditCb.filter(F.action == EDT_DONE))
+    cb.register(edit_choose_tutor, StudentEdit.choose_tutor, RegCb.filter(F.action == REG_TUTOR))
+    cb.register(edit_back_to_tutors, StudentEdit.choose_group, RegCb.filter(F.action == REG_BACK))
+    cb.register(edit_choose_group, StudentEdit.choose_group, RegCb.filter(F.action == REG_GROUP))
+
+    msg.register(edit_value, StudentEdit.value, free_text)
+    msg.register(edit_residence, StudentEdit.residence)
+    msg.register(edit_residence_address, StudentEdit.address, free_text)
+    msg.register(
+        reg_expect_buttons,
+        StateFilter(StudentEdit.menu, StudentEdit.choose_tutor, StudentEdit.choose_group),
+    )
     return router

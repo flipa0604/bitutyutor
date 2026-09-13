@@ -125,7 +125,7 @@ def test_build_students_workbook_headers_rows_and_labels() -> None:
     assert [c.value for c in ws[1]] == list(HEADERS)
     assert ws.max_row == 4
     assert ws.freeze_panes == "A2"
-    assert ws.auto_filter.ref == "A1:O4"
+    assert ws.auto_filter.ref == "A1:P4"
     assert ws["A1"].font.bold
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))

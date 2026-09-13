@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+
 from aiogram import Bot, Dispatcher
-from aiogram.types import InputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, User
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InputFile,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+    User,
+)
+from openpyxl import load_workbook
 
 from bot import texts
 from bot.db import Database
+from bot.excel import ALL_SHEET_NAME, build_all_tutors_workbook
 from tests.conftest import SECOND_SUPERADMIN_ID, SUPERADMIN_ID
 from tests.helpers import FakeSession, callback_update, contact_update, make_user, text_update
 
 TUTOR_TG = 2001
+OTHER_TUTOR_TG = 2002
 STUDENT_TG = 3001
 OTHER_TG = 3002
 
@@ -26,6 +39,23 @@ def reply_button_texts(markup: object) -> list[str]:
     return [b.text for row in markup.keyboard for b in row if isinstance(b, KeyboardButton)]
 
 
+def inline_data(markup: object) -> set[str]:
+    return (
+        {b.callback_data for row in markup.inline_keyboard for b in row if b.callback_data}
+        if isinstance(markup, InlineKeyboardMarkup)
+        else set()
+    )
+
+
+async def register_and_open_editor(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database, user: User, tutor_id: int, group_id: int
+) -> None:
+    """Register ``user`` (TTJ) and leave them sitting in the edit menu with a cleared session."""
+    await register_ttj(dp, bot, session, user, tutor_id, group_id)
+    session.clear()
+    await feed(dp, bot, text_update(user, "/mydata"), callback_update(user, "edt:open:"))
+
+
 async def register_ttj(
     dp: Dispatcher,
     bot: Bot,
@@ -34,15 +64,21 @@ async def register_ttj(
     tutor_id: int,
     group_id: int,
     start_text: str = "/start",
+    *,
+    already_registered: bool = False,
 ) -> None:
     """Drive a complete TTJ registration for ``user`` up to and including confirmation.
 
-    Plain students start with ``/start``; role users must press the register button instead.
+    Plain students start with ``/start``; role users must press the register button instead. A
+    student who already has a saved row sees their own card first and reopens the flow with the
+    "register again" button.
     """
+    await feed(dp, bot, text_update(user, start_text))
+    if already_registered:
+        await feed(dp, bot, callback_update(user, "edt:again:"))
     await feed(
         dp,
         bot,
-        text_update(user, start_text),
         callback_update(user, f"reg:tutor:{tutor_id}"),
         callback_update(user, f"reg:group:{group_id}"),
         text_update(user, "+998901234567"),
@@ -92,7 +128,7 @@ async def test_registration_ttj_path_and_deduplicated_notifications(
 
     # registering again is an update
     session.clear()
-    await register_ttj(dp, bot, session, student, tutor.id, group.id)
+    await register_ttj(dp, bot, session, student, tutor.id, group.id, already_registered=True)
     updates = [m for m in session.of("SendMessage") if m.text and m.text.startswith(texts.CARD_TITLE_UPDATE)]
     assert sorted(m.chat_id for m in updates) == [SUPERADMIN_ID, SECOND_SUPERADMIN_ID]
     assert len(await db.list_students()) == 1
@@ -478,3 +514,222 @@ async def test_group_deleted_mid_registration_restarts(
     assert texts.REG_GROUP_NOT_FOUND in session.sent_texts(STUDENT_TG)
     assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
     assert await db.get_student_by_telegram_id(STUDENT_TG) is None
+
+
+# ------------------------------------------------- student edits their data
+
+
+async def test_registered_student_sees_their_card_instead_of_a_new_registration(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_ttj(dp, bot, session, student, tutor.id, group.id)
+    session.clear()
+
+    await feed(dp, bot, text_update(student, "/start"))
+    card = session.of("SendMessage")[-1]
+    assert texts.STUDENT_HOME_TITLE in str(card.text)
+    assert "Aliyev Vali G'aniyevich" in str(card.text)
+    assert inline_data(card.reply_markup) == {"edt:open:", "edt:again:"}
+
+    # the whole flow is still one button away
+    await feed(dp, bot, callback_update(student, "edt:again:"))
+    assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
+
+
+async def test_mydata_starts_registration_when_nothing_is_saved(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    await db.add_group(tutor.id, "DI-21")
+
+    await feed(dp, bot, text_update(make_user(STUDENT_TG), "/mydata"))
+    assert texts.STUDENT_NOT_REGISTERED in session.sent_texts(STUDENT_TG)
+    assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
+
+
+async def test_student_edits_one_field_and_everyone_is_notified_once(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_ttj(dp, bot, session, student, tutor.id, group.id)
+    before = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert before is not None and before.edited_at is None
+    session.clear()
+
+    await feed(dp, bot, text_update(student, "/mydata"), callback_update(student, "edt:open:"))
+    menu = session.of("SendMessage")[-1]
+    assert texts.EDIT_MENU in str(menu.text)
+    buttons = inline_data(menu.reply_markup)
+    assert {"edt:field:phone", "edt:field:full_name", "edt:res:", "edt:tg:", "edt:done:"} <= buttons
+    assert "edt:field:address" not in buttons  # a TTJ resident has no street address to edit
+
+    await feed(dp, bot, callback_update(student, "edt:field:phone"))
+    assert session.last_text(STUDENT_TG) == texts.REG_ASK_PHONE
+    await feed(dp, bot, text_update(student, "12345"))
+    assert session.last_text(STUDENT_TG) == texts.REG_PHONE_INVALID  # rejected, still asking
+    await feed(dp, bot, text_update(student, "+998905555555"))
+
+    after = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert after is not None
+    assert after.phone == "+998905555555"
+    assert after.full_name == before.full_name and after.created_at == before.created_at
+    assert after.edited_at  # marked as changed after registration
+    assert texts.EDIT_SAVED in session.sent_texts(STUDENT_TG)
+
+    session.clear()
+    await feed(dp, bot, callback_update(student, "edt:done:"))
+    cards = [m for m in session.of("SendMessage") if m.text and m.text.startswith(texts.CARD_TITLE_UPDATE)]
+    assert sorted(m.chat_id for m in cards) == [SUPERADMIN_ID, SECOND_SUPERADMIN_ID, TUTOR_TG]
+    assert "+998905555555" in str(cards[0].text)
+    assert texts.EDIT_DONE in session.sent_texts(STUDENT_TG)
+
+
+async def test_student_edit_switches_residence_and_address_together(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_and_open_editor(dp, bot, session, db, student, tutor.id, group.id)
+
+    await feed(dp, bot, callback_update(student, "edt:res:"))
+    assert session.last_text(STUDENT_TG) == texts.REG_ASK_RESIDENCE
+    await feed(dp, bot, text_update(student, texts.BTN_RES_KVARTIRA))
+    assert session.last_text(STUDENT_TG) == texts.REG_ASK_ADDRESS
+    await feed(dp, bot, text_update(student, "Toshkent, Yakkasaroy 7"))
+
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None and row.residence == "kvartira" and row.address == "Toshkent, Yakkasaroy 7"
+    assert "edt:field:address" in inline_data(session.of("SendMessage")[-1].reply_markup)
+
+    # back to the dormitory: the address is filled in without asking
+    await feed(dp, bot, callback_update(student, "edt:res:"), text_update(student, texts.BTN_RES_TTJ))
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None and row.residence == "ttj" and row.address == "TTJ"
+
+
+async def test_student_edit_moves_to_another_tutor_and_group(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    first = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    second = await db.add_tutor("Aliyev Bobur", OTHER_TUTOR_TG)
+    g1 = await db.add_group(first.id, "DI-21")
+    g2 = await db.add_group(second.id, "AI-22")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_and_open_editor(dp, bot, session, db, student, first.id, g1.id)
+
+    await feed(dp, bot, callback_update(student, "edt:tg:"))
+    assert texts.EDIT_ASK_TUTOR in session.sent_texts(STUDENT_TG)
+    await feed(dp, bot, callback_update(student, f"reg:tutor:{second.id}"))
+    assert texts.EDIT_ASK_GROUP in session.sent_texts(STUDENT_TG)
+    await feed(dp, bot, callback_update(student, f"reg:group:{g2.id}"))
+
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None
+    assert row.tutor_id == second.id and row.group_id == g2.id and row.group_name == "AI-22"
+    assert await db.count_group_students(g1.id) == 0
+    assert await db.count_group_students(g2.id) == 1
+
+    # the new tutor is the one who hears about the next save
+    session.clear()
+    await feed(dp, bot, callback_update(student, "edt:done:"))
+    cards = [m for m in session.of("SendMessage") if m.text and m.text.startswith(texts.CARD_TITLE_UPDATE)]
+    assert sorted(m.chat_id for m in cards) == [SUPERADMIN_ID, SECOND_SUPERADMIN_ID, OTHER_TUTOR_TG]
+
+
+async def test_leaving_the_editor_untouched_notifies_nobody(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_and_open_editor(dp, bot, session, db, student, tutor.id, group.id)
+
+    session.clear()
+    await feed(dp, bot, callback_update(student, "edt:done:"))
+    assert texts.EDIT_NOTHING_CHANGED in session.sent_texts(STUDENT_TG)
+    assert not [m for m in session.of("SendMessage") if m.text and m.text.startswith(texts.CARD_TITLE_UPDATE)]
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None and row.edited_at is None
+
+
+async def test_edited_values_reach_the_admin_export(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    """What the admin downloads must be what the student last saved."""
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    student = make_user(STUDENT_TG, username="vali")
+    await register_and_open_editor(dp, bot, session, db, student, tutor.id, group.id)
+
+    await feed(
+        dp,
+        bot,
+        callback_update(student, "edt:field:full_name"),
+        text_update(student, "Aliyev Vali Yangi"),
+        callback_update(student, "edt:field:direction"),
+        text_update(student, "Sun'iy intellekt"),
+        callback_update(student, "edt:done:"),
+    )
+
+    workbook = load_workbook(BytesIO(build_all_tutors_workbook([tutor], await db.list_students())))
+    sheet = workbook[ALL_SHEET_NAME]
+    header = [c.value for c in sheet[1]]
+    row = dict(zip(header, [c.value for c in sheet[2]]))
+    assert row["F.I.SH"] == "Aliyev Vali Yangi"
+    assert row["Yo'nalish"] == "Sun'iy intellekt"
+    assert row["Oxirgi tahrir"]  # filled only once the row has been edited
+    assert row["Ro'yxatdan o'tgan vaqt"]
+
+
+# --------------------------------------------------------------- /users
+
+
+async def test_users_lists_everyone_who_pressed_start(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
+    group = await db.add_group(tutor.id, "DI-21")
+    await register_ttj(dp, bot, session, make_user(STUDENT_TG, username="vali"), tutor.id, group.id)
+    # started the bot but walked away before finishing
+    await feed(dp, bot, text_update(make_user(OTHER_TG, username="kimdir"), "/start"))
+    session.clear()
+
+    await feed(dp, bot, text_update(make_user(SUPERADMIN_ID), "/users"))
+    listing = session.of("SendMessage")[-1]
+    text = str(listing.text)
+    assert "Jami: <b>2</b> ta" in text
+    assert "ro'yxatdan o'tgan: <b>1</b> ta" in text and "o'tmagan: <b>1</b> ta" in text
+    assert f"<code>{STUDENT_TG}</code>" in text and f"<code>{OTHER_TG}</code>" in text
+    assert "@vali" in text and "@kimdir" in text
+    assert "✅" in text and "🕗" in text
+    assert inline_data(listing.reply_markup) == {"adm:panel:0"}  # single page: no arrows
+
+
+async def test_users_pages_and_refuses_non_admins(
+    dp: Dispatcher, bot: Bot, session: FakeSession, db: Database
+) -> None:
+    for index in range(25):
+        await db.touch_user(9000 + index, f"user{index}", f"Foydalanuvchi {index}")
+
+    admin = make_user(SUPERADMIN_ID)
+    await feed(dp, bot, text_update(admin, "/users"))
+    first = session.of("SendMessage")[-1]
+    assert "Jami: <b>25</b> ta" in str(first.text) and "1/2-sahifa" in str(first.text)
+    assert "<code>9000</code>" in str(first.text) and "<code>9020</code>" not in str(first.text)
+    assert inline_data(first.reply_markup) == {"usr:1", "adm:panel:0"}  # forward only
+
+    session.clear()
+    await feed(dp, bot, callback_update(admin, "usr:1"))
+    second = session.sent_texts(SUPERADMIN_ID)[-1]
+    assert "2/2-sahifa" in second and "<code>9020</code>" in second
+    assert "21. " in second and "25. " in second  # numbering continues across pages
+
+    session.clear()
+    await feed(dp, bot, text_update(make_user(STUDENT_TG), "/users"))
+    assert session.last_text(STUDENT_TG) == texts.ADMIN_ONLY

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
-from .models import Student, Tutor
+from collections.abc import Sequence
+
+from .models import BotUser, Student, Tutor
 from .utils import clean_text, hesc
 
 # ----------------------------------------------------------------- buttons
@@ -16,6 +18,8 @@ BTN_CANCEL = "❌ Bekor qilish"
 MAIN_MENU_BUTTONS: frozenset[str] = frozenset({BTN_ADMIN_PANEL, BTN_TUTOR_PANEL, BTN_REGISTER})
 """Reply-keyboard labels of the main menu; free-text FSM steps never accept them as data."""
 BTN_BACK = "⬅️ Orqaga"
+BTN_PREV = "⬅️"
+BTN_NEXT = "➡️"
 BTN_SEND_CONTACT = "📱 Raqamni yuborish"
 
 BTN_RES_TTJ = "🏠 TTJ"
@@ -24,6 +28,7 @@ BTN_RES_UY = "🏡 O'zimning uyimda"
 
 BTN_ADMIN_TUTORS = "👨‍🏫 Tyutorlar ro'yxati"
 BTN_ADMIN_ADD_TUTOR = "➕ Tyutor qo'shish"
+BTN_ADMIN_USERS = "👥 Foydalanuvchilar"
 BTN_ADMIN_EXCEL_ALL = "📊 Excel (barcha tyutorlar)"
 BTN_ADMIN_EXCEL_PICK = "📊 Excel (tyutor bo'yicha)"
 BTN_EDIT_NAME = "✏️ Ismini o'zgartirish"
@@ -45,6 +50,21 @@ BTN_EXCEL_RES_UY = "🏡 O'z uyi"
 
 BTN_CONFIRM = "✅ Tasdiqlash"
 BTN_RESTART = "🔄 Qaytadan boshlash"
+
+# student self-service; the edit menu packs two of these per row, so labels stay short
+BTN_EDIT_MY_DATA = "✏️ Ma'lumotlarimni tahrirlash"
+BTN_REREGISTER = "🔄 Qaytadan ro'yxatdan o'tish"
+BTN_EDIT_DONE = "✅ Tayyor"
+BTN_EDIT_TUTOR_GROUP = "👨‍🏫 Tyutor / guruh"
+BTN_EDIT_FULL_NAME = "👤 F.I.SH"
+BTN_EDIT_PHONE = "📞 Telefon"
+BTN_EDIT_DIRECTION = "🎓 Yo'nalish"
+BTN_EDIT_RESIDENCE = "🏠 Turar joy"
+BTN_EDIT_ADDRESS = "📍 Manzil"
+BTN_EDIT_FATHER_NAME = "👨 Otasi"
+BTN_EDIT_FATHER_PHONE = "📞 Otasining tel"
+BTN_EDIT_MOTHER_NAME = "👩 Onasi"
+BTN_EDIT_MOTHER_PHONE = "📞 Onasining tel"
 
 # --------------------------------------------------------------- residence
 
@@ -95,6 +115,7 @@ HELP_ADMIN = (
     "👑 <b>Superadmin buyruqlari</b>\n"
     "/admin — admin panel\n"
     "/tutors — tyutorlar ro'yxati\n"
+    "/users — botni ishga tushirgan barcha foydalanuvchilar\n"
     "/add_tutor — tyutor qo'shish\n"
     "/edit_tutor — tyutorni tahrirlash\n"
     "/delete_tutor — tyutorni o'chirish"
@@ -111,6 +132,7 @@ HELP_TUTOR = (
 HELP_STUDENT = (
     "📝 <b>Talaba</b>\n"
     "/start — ro'yxatdan o'tish (tyutor va guruhni tanlab, ma'lumotlaringizni kiritasiz)\n"
+    "/mydata — ma'lumotlarimni ko'rish va tahrirlash\n"
     "/cancel — joriy amalni bekor qilish\n"
     "/help — yordam"
 )
@@ -167,6 +189,32 @@ TUTOR_CARD = (
     "🎓 Talabalar: {students} ta\n"
     "🕒 Qo'shilgan: {created_at}"
 )
+
+
+USERS_EMPTY = "📭 Hozircha hech kim botni ishga tushirmagan."
+USERS_TITLE = (
+    "👥 <b>Bot foydalanuvchilari</b>\n\n"
+    "Jami: <b>{total}</b> ta · ✅ ro'yxatdan o'tgan: <b>{registered}</b> ta · "
+    "🕗 o'tmagan: <b>{pending}</b> ta\n"
+    "📄 {page}/{pages}-sahifa"
+)
+
+
+def user_line(index: int, user: BotUser) -> str:
+    """One row of /users: ``✅`` finished registering, ``🕗`` only pressed /start."""
+    mark = "✅" if user.is_student else "🕗"
+    username = f" @{hesc(user.username)}" if user.username else ""
+    name = hesc(user.full_name) or "—"
+    return f"{index}. {mark} {name}{username} — <code>{user.telegram_id}</code>"
+
+
+def users_page(users: Sequence[BotUser], total: int, registered: int, page: int, pages: int, offset: int) -> str:
+    """The /users message: counters, page number and the numbered slice (``offset`` is 0-based)."""
+    head = USERS_TITLE.format(
+        total=total, registered=registered, pending=total - registered, page=page + 1, pages=pages
+    )
+    lines = [user_line(offset + i, u) for i, u in enumerate(users, start=1)]
+    return head + "\n\n" + "\n".join(lines)
 
 
 def tutor_button_label(tutor: Tutor) -> str:
@@ -243,6 +291,19 @@ REG_RESTARTED = "🔄 Qaytadan boshlaymiz."
 CARD_TITLE_NEW = "🆕 Yangi talaba ro'yxatdan o'tdi"
 CARD_TITLE_UPDATE = "🔄 Talaba ma'lumotlarini yangiladi"
 
+# ---------------------------------------------------- student self-service
+
+STUDENT_HOME_TITLE = "📋 Sizning ma'lumotlaringiz"
+STUDENT_HOME_HINT = "Ma'lumotlaringizni istalgan vaqtda o'zgartirishingiz mumkin."
+STUDENT_NOT_REGISTERED = "Siz hali ro'yxatdan o'tmagansiz. Boshlaymiz 👇"
+EDIT_MENU = "✏️ Qaysi ma'lumotni o'zgartirasiz?"
+EDIT_SAVED = "✅ Saqlandi."
+EDIT_DONE = "✅ Ma'lumotlaringiz yangilandi. Rahmat!"
+EDIT_NOTHING_CHANGED = "Hech narsa o'zgartirilmadi."
+EDIT_GONE = "❗️ Ma'lumotlaringiz topilmadi — tyutoringiz yoki guruhingiz o'chirilgan bo'lishi mumkin."
+EDIT_ASK_TUTOR = "👨‍🏫 Yangi tyutoringizni tanlang:"
+EDIT_ASK_GROUP = "👥 Yangi guruhingizni tanlang:"
+
 
 def student_card(title: str, student: Student) -> str:
     """Format the student card (§9). All user-supplied values are HTML-escaped."""
@@ -267,5 +328,7 @@ def student_card(title: str, student: Student) -> str:
         f"🆔 Telegram: {telegram}(ID: {student.telegram_id})",
     ]
     if student.created_at:
-        lines.append(f"🕒 {hesc(student.created_at)}")
+        lines.append(f"🕒 Ro'yxatdan o'tgan: {hesc(student.created_at)}")
+    if student.edited_at:
+        lines.append(f"✏️ Yangilangan: {hesc(student.edited_at)}")
     return "\n".join(lines)

@@ -34,11 +34,31 @@ class TutorCb(CallbackData, prefix="tut"):
     value: str = ""
 
 
+class UsersCb(CallbackData, prefix="usr"):
+    """Paging of the /users list, packed as ``usr:{page}`` (0-based).
+
+    Separate from :class:`AdminCb` on purpose: adding a field to ``AdminCb`` would change the
+    packed length of every existing admin button.
+    """
+
+    page: int = 0
+
+
 class RegCb(CallbackData, prefix="reg"):
     """Student registration callbacks, packed as ``reg:{action}:{id}`` (e.g. ``reg:tutor:5``)."""
 
     action: str
     id: int = 0
+
+
+class EditCb(CallbackData, prefix="edt"):
+    """Student self-service callbacks, packed as ``edt:{action}:{field}``.
+
+    ``field`` names a student column for :data:`EDT_FIELD` and is empty for every other action.
+    """
+
+    action: str
+    field: str = ""
 
 
 # admin actions
@@ -79,6 +99,14 @@ REG_BACK = "back"
 REG_CONFIRM = "confirm"
 REG_RESTART = "restart"
 REG_CANCEL = "cancel"
+
+# student self-service actions
+EDT_OPEN = "open"  # show the field picker
+EDT_FIELD = "field"  # edit one free-text column, named by ``EditCb.field``
+EDT_RESIDENCE = "res"
+EDT_TUTOR_GROUP = "tg"
+EDT_DONE = "done"
+EDT_REREGISTER = "again"
 
 
 # ---------------------------------------------------------- reply keyboards
@@ -136,9 +164,24 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=texts.BTN_ADMIN_TUTORS, callback_data=AdminCb(action=ADM_LIST))
     b.button(text=texts.BTN_ADMIN_ADD_TUTOR, callback_data=AdminCb(action=ADM_ADD))
+    b.button(text=texts.BTN_ADMIN_USERS, callback_data=UsersCb(page=0))
     b.button(text=texts.BTN_ADMIN_EXCEL_ALL, callback_data=AdminCb(action=ADM_EXCEL_ALL))
     b.button(text=texts.BTN_ADMIN_EXCEL_PICK, callback_data=AdminCb(action=ADM_EXCEL_PICK))
-    b.adjust(2, 1, 1)
+    b.adjust(2, 1, 1, 1)
+    return b.as_markup()
+
+
+def admin_users_kb(page: int, pages: int) -> InlineKeyboardMarkup:
+    """Prev/next paging for /users; an arrow appears only when there is a page on that side."""
+    b = InlineKeyboardBuilder()
+    arrows = []
+    if page > 0:
+        arrows.append(InlineKeyboardButton(text=texts.BTN_PREV, callback_data=UsersCb(page=page - 1).pack()))
+    if page + 1 < pages:
+        arrows.append(InlineKeyboardButton(text=texts.BTN_NEXT, callback_data=UsersCb(page=page + 1).pack()))
+    if arrows:
+        b.row(*arrows)
+    b.row(_back_button(texts.BTN_BACK, AdminCb(action=ADM_PANEL).pack()))
     return b.as_markup()
 
 
@@ -289,4 +332,38 @@ def reg_confirm_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_RESTART, callback_data=RegCb(action=REG_RESTART))
     b.button(text=texts.BTN_CANCEL, callback_data=RegCb(action=REG_CANCEL))
     b.adjust(1)
+    return b.as_markup()
+
+
+# ------------------------------------------------- inline: student's own data
+
+
+def student_home_kb() -> InlineKeyboardMarkup:
+    """Shown under a registered student's own card: edit one field, or redo the whole flow."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_EDIT_MY_DATA, callback_data=EditCb(action=EDT_OPEN))
+    b.button(text=texts.BTN_REREGISTER, callback_data=EditCb(action=EDT_REREGISTER))
+    b.adjust(1)
+    return b.as_markup()
+
+
+def student_edit_field_kb(residence: str) -> InlineKeyboardMarkup:
+    """Field picker. ``Manzil`` is hidden for TTJ residents: their address is always ``TTJ``,
+    and it is set automatically when they pick a residence."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_EDIT_TUTOR_GROUP, callback_data=EditCb(action=EDT_TUTOR_GROUP))
+    b.button(text=texts.BTN_EDIT_FULL_NAME, callback_data=EditCb(action=EDT_FIELD, field="full_name"))
+    b.button(text=texts.BTN_EDIT_PHONE, callback_data=EditCb(action=EDT_FIELD, field="phone"))
+    b.button(text=texts.BTN_EDIT_DIRECTION, callback_data=EditCb(action=EDT_FIELD, field="direction"))
+    b.button(text=texts.BTN_EDIT_RESIDENCE, callback_data=EditCb(action=EDT_RESIDENCE))
+    rows = [1, 2, 2]
+    if residence != "ttj":
+        b.button(text=texts.BTN_EDIT_ADDRESS, callback_data=EditCb(action=EDT_FIELD, field="address"))
+        rows.append(1)
+    b.button(text=texts.BTN_EDIT_FATHER_NAME, callback_data=EditCb(action=EDT_FIELD, field="father_name"))
+    b.button(text=texts.BTN_EDIT_FATHER_PHONE, callback_data=EditCb(action=EDT_FIELD, field="father_phone"))
+    b.button(text=texts.BTN_EDIT_MOTHER_NAME, callback_data=EditCb(action=EDT_FIELD, field="mother_name"))
+    b.button(text=texts.BTN_EDIT_MOTHER_PHONE, callback_data=EditCb(action=EDT_FIELD, field="mother_phone"))
+    b.button(text=texts.BTN_EDIT_DONE, callback_data=EditCb(action=EDT_DONE))
+    b.adjust(*rows, 2, 2, 1)
     return b.as_markup()

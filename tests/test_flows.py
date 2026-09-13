@@ -77,6 +77,7 @@ SPEC_HEADERS = [
     "Telegram username",
     "Telegram ID",
     "Ro'yxatdan o'tgan vaqt",
+    "Oxirgi tahrir",
 ]
 
 _update_ids = count(1)
@@ -348,10 +349,18 @@ async def register(
     *,
     start_text: str = "/start",
     confirm: bool = True,
+    already_registered: bool = False,
 ) -> None:
-    """Drive the registration FSM step by step, asserting each prompt as SPEC §8 describes it."""
+    """Drive the registration FSM step by step, asserting each prompt as SPEC §8 describes it.
+
+    A student who already has a saved row lands on their own card, so the flow is reopened with the
+    "register again" button instead of starting straight from the tutor picker.
+    """
     uid = user.id
     await h.feed(text_update(user, start_text))
+    if already_registered:
+        assert texts.STUDENT_HOME_TITLE in h.last_text(uid)
+        await h.feed(callback_update(user, "edt:again:"))
     picker = h.last_message(uid)
     assert picker.text == texts.REG_CHOOSE_TUTOR and "Tyutoringizni tanlang" in picker.text
     tutor_buttons = inline_buttons(picker.reply_markup)
@@ -1202,6 +1211,7 @@ async def test_reregistration_updates_instead_of_duplicating(h: Harness) -> None
             residence_button=texts.BTN_RES_KVARTIRA,
             address="Toshkent, Yakkasaroy 7",
         ),
+        already_registered=True,
     )
     rows = await h.db.list_students()
     assert len(rows) == 1
@@ -1506,13 +1516,15 @@ async def test_setup_bot_commands_scopes(h: Harness) -> None:
         if key is None:
             key = type(m.scope).__name__
         by_scope[key] = {c.command for c in m.commands}
-    assert by_scope.get("BotCommandScopeDefault") == {"start", "help", "cancel"}
+    assert by_scope.get("BotCommandScopeDefault") == {"start", "mydata", "help", "cancel"}
     assert by_scope[SUPERADMIN] == {
         "start",
+        "mydata",
         "help",
         "cancel",
         "admin",
         "tutors",
+        "users",
         "add_tutor",
         "edit_tutor",
         "delete_tutor",

@@ -16,12 +16,14 @@ log = logging.getLogger(__name__)
 
 DEFAULT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="start", description="Boshlash / ro'yxatdan o'tish"),
+    BotCommand(command="mydata", description="Ma'lumotlarim (ko'rish va tahrirlash)"),
     BotCommand(command="help", description="Yordam"),
     BotCommand(command="cancel", description="Bekor qilish"),
 )
 ADMIN_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="admin", description="Admin panel"),
     BotCommand(command="tutors", description="Tyutorlar ro'yxati"),
+    BotCommand(command="users", description="Bot foydalanuvchilari"),
     BotCommand(command="add_tutor", description="Tyutor qo'shish"),
     BotCommand(command="edit_tutor", description="Tyutorni tahrirlash"),
     BotCommand(command="delete_tutor", description="Tyutorni o'chirish"),

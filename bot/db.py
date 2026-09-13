@@ -9,9 +9,16 @@ from typing import Any
 
 import aiosqlite
 
-from .models import RESIDENCE_VALUES, Group, Student, Tutor
+from .models import RESIDENCE_VALUES, BotUser, Group, Student, Tutor
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+  telegram_id INTEGER PRIMARY KEY,
+  username TEXT,
+  full_name TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  last_start_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 CREATE TABLE IF NOT EXISTS tutors (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -41,7 +48,8 @@ CREATE TABLE IF NOT EXISTS students (
   mother_name TEXT NOT NULL,
   mother_phone TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  edited_at TEXT
 );
 """
 
@@ -57,6 +65,36 @@ SELECT g.*, (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) AS student
 FROM groups g
 """
 
+_USER_SELECT = """
+SELECT u.*, EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id) AS is_student
+FROM users u
+"""
+
+_BACKFILL_USERS = """
+INSERT OR IGNORE INTO users (telegram_id, username, full_name, started_at, last_start_at)
+SELECT telegram_id, username, full_name, created_at, updated_at FROM students
+"""
+
+
+STUDENT_EDITABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "tutor_id",
+        "group_id",
+        "username",
+        "full_name",
+        "phone",
+        "direction",
+        "residence",
+        "address",
+        "father_name",
+        "father_phone",
+        "mother_name",
+        "mother_phone",
+    }
+)
+"""Columns :meth:`Database.update_student` may write; ``id``, ``telegram_id`` and the timestamps
+are immutable. Only names from this set are ever interpolated into an UPDATE statement."""
+
 
 class DuplicateError(sqlite3.IntegrityError):
     """A UNIQUE constraint was violated (duplicate tutor telegram_id or duplicate group name)."""
@@ -64,6 +102,22 @@ class DuplicateError(sqlite3.IntegrityError):
 
 def _row_to_tutor(row: aiosqlite.Row) -> Tutor:
     return Tutor(id=row["id"], name=row["name"], telegram_id=row["telegram_id"], created_at=row["created_at"])
+
+
+async def _existing_columns(conn: aiosqlite.Connection, table: str) -> set[str]:
+    async with conn.execute(f"PRAGMA table_info({table})") as cur:
+        return {row["name"] for row in await cur.fetchall()}
+
+
+def _row_to_bot_user(row: aiosqlite.Row) -> BotUser:
+    return BotUser(
+        telegram_id=row["telegram_id"],
+        username=row["username"],
+        full_name=row["full_name"],
+        started_at=row["started_at"],
+        last_start_at=row["last_start_at"],
+        is_student=bool(row["is_student"]),
+    )
 
 
 def _row_to_group(row: aiosqlite.Row) -> Group:
@@ -94,6 +148,7 @@ def _row_to_student(row: aiosqlite.Row) -> Student:
         mother_phone=row["mother_phone"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        edited_at=row["edited_at"],
         tutor_name=row["tutor_name"],
         group_name=row["group_name"],
     )
@@ -132,6 +187,13 @@ class Database:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA foreign_keys = ON")
         await conn.executescript(SCHEMA)
+        # ``CREATE TABLE IF NOT EXISTS`` never alters a table that is already there, so columns
+        # added after the first release have to be brought in explicitly.
+        if "edited_at" not in await _existing_columns(conn, "students"):
+            await conn.execute("ALTER TABLE students ADD COLUMN edited_at TEXT")
+        # Students saved before the users table existed have obviously pressed /start, so seed them
+        # instead of showing a half-empty list until each of them happens to come back.
+        await conn.execute(_BACKFILL_USERS)
         await conn.commit()
         self._conn = conn
 
@@ -172,6 +234,39 @@ class Database:
                 raise DuplicateError(str(exc)) from exc
             raise
         return cur
+
+    # -------------------------------------------------------------------- users
+
+    async def touch_user(self, telegram_id: int, username: str | None, full_name: str) -> None:
+        """Record a /start press: the first one creates the row, later ones refresh the profile."""
+        await self._write(
+            """
+            INSERT INTO users (telegram_id, username, full_name) VALUES (?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+              username = excluded.username,
+              full_name = excluded.full_name,
+              last_start_at = datetime('now','localtime')
+            """,
+            (telegram_id, username, full_name),
+        )
+
+    async def count_users(self) -> tuple[int, int]:
+        """``(total, registered)``: how many people started the bot, and how many are students."""
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS total,"
+            " SUM(EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)) AS registered"
+            " FROM users u"
+        )
+        if row is None:
+            return 0, 0
+        return int(row["total"] or 0), int(row["registered"] or 0)
+
+    async def list_users(self, limit: int, offset: int = 0) -> list[BotUser]:
+        """One page of users, oldest first, so the numbering stays stable as new ones arrive."""
+        rows = await self._fetchall(
+            _USER_SELECT + " ORDER BY u.started_at, u.telegram_id LIMIT ? OFFSET ?", (limit, offset)
+        )
+        return [_row_to_bot_user(r) for r in rows]
 
     # ------------------------------------------------------------------- tutors
 
@@ -297,7 +392,8 @@ class Database:
                   father_phone = excluded.father_phone,
                   mother_name = excluded.mother_name,
                   mother_phone = excluded.mother_phone,
-                  updated_at = datetime('now','localtime')
+                  updated_at = datetime('now','localtime'),
+                  edited_at = datetime('now','localtime')
                 """,
                 (
                     telegram_id,
@@ -318,6 +414,34 @@ class Database:
         student = await self.get_student_by_telegram_id(telegram_id)
         assert student is not None
         return student, is_update
+
+    async def update_student(self, telegram_id: int, /, **fields: Any) -> Student | None:
+        """Overwrite single columns of one student, bump ``updated_at`` and return the fresh row.
+
+        Returns ``None`` when no row matched, i.e. the registration is gone (the student's tutor or
+        group was deleted mid-edit and cascaded). Field names are checked against
+        ``STUDENT_EDITABLE_FIELDS`` before they reach the statement, so the interpolation below
+        cannot carry caller input into the SQL; the values stay bound parameters.
+
+        ``telegram_id`` is positional-only so that a caller passing ``telegram_id=...`` among the
+        fields gets the whitelist's error rather than a confusing TypeError.
+        """
+        if not fields:
+            raise ValueError("update_student() needs at least one field")
+        unknown = sorted(set(fields) - STUDENT_EDITABLE_FIELDS)
+        if unknown:
+            raise ValueError(f"Not an editable student field: {', '.join(unknown)}")
+        if "residence" in fields and fields["residence"] not in RESIDENCE_VALUES:
+            raise ValueError(f"Invalid residence: {fields['residence']!r}")
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        cur = await self._write(
+            f"UPDATE students SET {assignments}, updated_at = datetime('now','localtime'),"
+            " edited_at = datetime('now','localtime') WHERE telegram_id = ?",
+            (*fields.values(), telegram_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        return await self.get_student_by_telegram_id(telegram_id)
 
     async def get_student_by_telegram_id(self, telegram_id: int) -> Student | None:
         row = await self._fetchone(_STUDENT_SELECT + " WHERE s.telegram_id = ?", (telegram_id,))

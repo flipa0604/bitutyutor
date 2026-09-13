@@ -38,6 +38,7 @@ from ..keyboards import (
     ADM_SAVE,
     ADM_VIEW,
     AdminCb,
+    UsersCb,
     admin_back_kb,
     admin_confirm_delete_kb,
     admin_edit_field_kb,
@@ -45,6 +46,7 @@ from ..keyboards import (
     admin_save_kb,
     admin_tutor_card_kb,
     admin_tutor_list_kb,
+    admin_users_kb,
     cancel_kb,
     main_menu_kb,
 )
@@ -56,6 +58,7 @@ from .tutor import send_tutor_workbook
 log = logging.getLogger(__name__)
 
 TUTOR_NAME_MAX_LEN = 100
+USERS_PAGE_SIZE = 20
 
 
 # ------------------------------------------------------------------ helpers
@@ -68,6 +71,18 @@ async def _tutor_list(
     if not tutors:
         return texts.TUTOR_LIST_EMPTY, admin_back_kb()
     return title or texts.TUTOR_LIST_TITLE.format(n=len(tutors)), admin_tutor_list_kb(tutors, action=action)
+
+
+async def _users_page(db: Database, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Render one page of /users, clamping ``page`` into range so a stale arrow cannot overshoot."""
+    total, registered = await db.count_users()
+    if total == 0:
+        return texts.USERS_EMPTY, admin_back_kb()
+    pages = (total + USERS_PAGE_SIZE - 1) // USERS_PAGE_SIZE
+    page = min(max(page, 0), pages - 1)
+    offset = page * USERS_PAGE_SIZE
+    users = await db.list_users(USERS_PAGE_SIZE, offset)
+    return texts.users_page(users, total, registered, page, pages, offset), admin_users_kb(page, pages)
 
 
 async def _tutor_card(db: Database, tutor: Tutor) -> str:
@@ -110,6 +125,19 @@ def _telegram_id_from_message(message: Message) -> tuple[int | None, bool]:
 async def cmd_admin(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(texts.ADMIN_PANEL, reply_markup=admin_panel_kb())
+
+
+async def cmd_users(message: Message, state: FSMContext, db: Database) -> None:
+    await state.clear()
+    text, markup = await _users_page(db, 0)
+    await message.answer(text, reply_markup=markup)
+
+
+async def cb_users(callback: CallbackQuery, callback_data: UsersCb, state: FSMContext, db: Database, bot: Bot) -> None:
+    await state.clear()
+    await callback.answer()
+    text, markup = await _users_page(db, callback_data.page)
+    await edit_or_send(callback, bot, text, markup)
 
 
 async def cb_panel(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
@@ -402,10 +430,12 @@ def create_router() -> Router:
     msg.register(cmd_admin, Command("admin"))
     msg.register(cmd_admin, F.text == texts.BTN_ADMIN_PANEL)
     msg.register(cmd_tutors, Command("tutors"))
+    msg.register(cmd_users, Command("users"))
     msg.register(cmd_add_tutor, Command("add_tutor"))
     msg.register(cmd_edit_tutor, Command("edit_tutor"))
     msg.register(cmd_delete_tutor, Command("delete_tutor"))
 
+    cb.register(cb_users, UsersCb.filter())
     cb.register(cb_panel, AdminCb.filter(F.action == ADM_PANEL))
     cb.register(cb_list, AdminCb.filter(F.action == ADM_LIST))
     cb.register(cb_view, AdminCb.filter(F.action == ADM_VIEW))

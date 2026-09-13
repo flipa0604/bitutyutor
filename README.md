@@ -78,6 +78,8 @@ sudo systemctl restart bitutyutor
 - `/add_tutor` — tyutor qo'shish (F.I.SH → Telegram ID → tasdiqlash)
 - `/edit_tutor` — tyutor ismini yoki Telegram ID sini o'zgartirish
 - `/delete_tutor` — tyutorni o'chirish (uning guruhlari va talabalari ham o'chiriladi, oldin tasdiq so'raladi)
+- `/users` — botni ishga tushirgan **barcha** foydalanuvchilar: ✅ ro'yxatdan o'tganlar va 🕗 o'tmaganlar,
+  har birida ism, username va Telegram ID; 20 tadan sahifalanadi
 - 📊 Excel (barcha tyutorlar) — bitta faylda `Barchasi` varag'i + har bir tyutor uchun alohida varaq
 - 📊 Excel (tyutor bo'yicha) — tanlangan tyutorning to'liq fayli
 
@@ -100,13 +102,30 @@ Ro'yxatdan o'tish bosqichlari: tyutor → guruh → telefon (kontakt yuborish yo
 yo'nalish → turar joy (TTJ / Kvartira / O'z uyi; TTJ bo'lsa manzil so'ralmaydi) → manzil → otasining F.I.SH va
 telefoni → onasining F.I.SH va telefoni → tasdiqlash.
 
+#### Ma'lumotlarni tahrirlash
+
+Ro'yxatdan o'tgan talaba `/start` yoki `/mydata` bosganda o'z kartasini ko'radi va **istalgan vaqtda**
+ma'lumotlarini o'zgartira oladi:
+
+- ✏️ **Ma'lumotlarimni tahrirlash** — kerakli maydonni tanlab, faqat o'shani qayta kiritadi:
+  F.I.SH, telefon, yo'nalish, turar joy, manzil, ota-onasining ismi va raqami, hatto tyutor/guruh.
+  Har bir o'zgarish darhol saqlanadi; ✅ **Tayyor** bosilganda tyutor va superadminlarga yangilangan
+  karta boradi (bir necha maydon o'zgartirilsa ham **bitta** xabar).
+- 🔄 **Qaytadan ro'yxatdan o'tish** — to'liq jarayonni boshidan o'tish.
+
+Turar joy TTJ ga o'zgartirilsa manzil avtomatik `TTJ` bo'ladi va so'ralmaydi.
+
 Talaba qayta ro'yxatdan o'tsa, eski ma'lumotlari yangilanadi (tyutorga "ma'lumotlarini yangiladi" xabari boradi).
 `/cancel` yoki ❌ Bekor qilish — istalgan bosqichda jarayonni to'xtatadi.
 
 ## Excel fayl tuzilishi
 
 Ustunlar: `№ | F.I.SH | Telefon | Yo'nalish | Tyutor | Guruh | Turar joy | Manzil | Otasining F.I.SH | Otasining tel |
-Onasining F.I.SH | Onasining tel | Telegram username | Telegram ID | Ro'yxatdan o'tgan vaqt`.
+Onasining F.I.SH | Onasining tel | Telegram username | Telegram ID | Ro'yxatdan o'tgan vaqt | Oxirgi tahrir`.
+
+`Oxirgi tahrir` — talaba ma'lumotlarini qachon oxirgi marta o'zgartirgani. Ro'yxatdan o'tgandan keyin
+hech narsa o'zgartirilmagan bo'lsa, katak **bo'sh** turadi. Excel har safar bazadan yangi o'qiladi,
+ya'ni yuklab olingan fayl doim eng so'nggi ma'lumotni ko'rsatadi.
 Sarlavha qatori qalin va rangli, birinchi qator muzlatilgan, filtr yoqilgan. Telefon raqamlari matn sifatida saqlanadi.
 
 ## Loyiha tuzilishi
