@@ -93,7 +93,8 @@ sudo systemctl restart bitutyutor
 - `/delete_group` — guruhni o'chirish (talabalar ma'lumoti ham o'chadi, oldin tasdiq so'raladi)
 - `/excel` — Excel yuklab olish:
   - 👥 **Guruh bo'yicha** — faqat tanlangan guruh (bitta varaq)
-  - 🏠 **Turar joy bo'yicha** — TTJ / Kvartira / O'z uyi bo'yicha barcha guruhlardan (Guruh ustuni bilan)
+  - 🏠 **Turar joy bo'yicha** — TTJ / Kvartira / O'z uyi / Qarindoshinikida bo'yicha barcha guruhlardan
+    (Guruh ustuni bilan)
   - 📦 **Barcha guruhlar** — `Barchasi` varag'i + har bir guruh uchun alohida varaq
 
 Tyutor faqat **o'z** guruhlari va talabalarini ko'radi.
@@ -101,8 +102,8 @@ Tyutor faqat **o'z** guruhlari va talabalarini ko'radi.
 ### Talaba (`/start`)
 
 Ro'yxatdan o'tish bosqichlari: tyutor → guruh → telefon (kontakt yuborish yoki `+998XXXXXXXXX`) → F.I.SH →
-yo'nalish → turar joy (TTJ / Kvartira / O'z uyi; TTJ bo'lsa manzil so'ralmaydi) → manzil → otasining F.I.SH va
-telefoni → onasining F.I.SH va telefoni → tasdiqlash.
+yo'nalish → turar joy (TTJ / Kvartira / O'zimning uyimda / Qarindoshinikida; faqat TTJ bo'lsa manzil
+so'ralmaydi) → manzil → otasining F.I.SH va telefoni → onasining F.I.SH va telefoni → tasdiqlash.
 
 #### Ma'lumotlarni tahrirlash
 

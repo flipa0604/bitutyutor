@@ -686,6 +686,14 @@ async def test_student_edit_switches_residence_and_address_together(
     row = await db.get_student_by_telegram_id(STUDENT_TG)
     assert row is not None and row.residence == "ttj" and row.address == "TTJ"
 
+    # staying with relatives is an address like any other
+    await feed(dp, bot, callback_update(student, "edt:res:"), text_update(student, texts.BTN_RES_QARINDOSH))
+    assert session.last_text(STUDENT_TG) == texts.REG_ASK_ADDRESS
+    await feed(dp, bot, text_update(student, "Samarqand, Registon 3"))
+    row = await db.get_student_by_telegram_id(STUDENT_TG)
+    assert row is not None and row.residence == "qarindosh" and row.address == "Samarqand, Registon 3"
+    assert "edt:field:address" in inline_data(session.of("SendMessage")[-1].reply_markup)
+
 
 async def test_student_edit_moves_to_another_tutor_and_group(
     dp: Dispatcher, bot: Bot, session: FakeSession, db: Database

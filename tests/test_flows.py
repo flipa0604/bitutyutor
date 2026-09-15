@@ -333,7 +333,7 @@ class RegInput:
     full_name: str = "Aliyev Vali G'aniyevich"
     direction: str = "Dasturiy injiniring"
     residence_button: str = texts.BTN_RES_TTJ
-    address: str | None = None  # required for kvartira / uy
+    address: str | None = None  # required for every residence but TTJ
     father_name: str = "Aliyev G'ani Karimovich"
     father_phone: str = "+998901111111"
     mother_name: str = "Aliyeva Zulfiya Anvarovna"
@@ -395,6 +395,7 @@ async def register(
         texts.BTN_RES_TTJ,
         texts.BTN_RES_KVARTIRA,
         texts.BTN_RES_UY,
+        texts.BTN_RES_QARINDOSH,
         texts.BTN_CANCEL,
     ]
 
@@ -493,13 +494,17 @@ async def test_card_omits_username_when_absent(h: Harness) -> None:
     assert "@" not in card_text and f"(ID: {STUDENT})" in card_text
 
 
-# ================================================================== (b) kvartira / uy paths
+# ================================================================== (b) kvartira / uy / qarindosh paths
 
 
 @pytest.mark.parametrize(
     ("button", "code"),
-    [(texts.BTN_RES_KVARTIRA, "kvartira"), (texts.BTN_RES_UY, "uy")],
-    ids=["kvartira", "uy"],
+    [
+        (texts.BTN_RES_KVARTIRA, "kvartira"),
+        (texts.BTN_RES_UY, "uy"),
+        (texts.BTN_RES_QARINDOSH, "qarindosh"),
+    ],
+    ids=["kvartira", "uy", "qarindosh"],
 )
 async def test_registration_asks_address_for_non_ttj(h: Harness, button: str, code: str) -> None:
     tutor = await h.db.add_tutor("Karimov Aziz", TUTOR)
@@ -513,7 +518,7 @@ async def test_registration_asks_address_for_non_ttj(h: Harness, button: str, co
     assert row is not None
     assert row.residence == code
     assert row.address == "Toshkent, Chilonzor 5, 12-uy"
-    label = {"kvartira": "Kvartira", "uy": "O'z uyi"}[code]
+    label = {"kvartira": "Kvartira", "uy": "O'z uyi", "qarindosh": "Qarindoshinikida"}[code]
     card_text = next(m.text for m in h.messages(TUTOR) if m.text.startswith(texts.CARD_TITLE_NEW))
     assert f"Turar joy: {label}" in card_text and "Manzil: Toshkent, Chilonzor 5, 12-uy" in card_text
     assert h.cards(texts.CARD_TITLE_NEW) == Counter({TUTOR: 1, SUPERADMIN: 1, BOTH: 1})
@@ -550,11 +555,18 @@ async def test_address_validation_and_typed_residence_words(h: Harness) -> None:
 
 
 @pytest.mark.parametrize(
-    "typed",
-    ["O’zimning uyimda", "Oʻzimning uyimda", "O‘z uyi", "o'zimning uyimda"],
-    ids=["U+2019", "U+02BB", "U+2018", "ascii"],
+    ("typed", "code"),
+    [
+        ("O’zimning uyimda", "uy"),
+        ("Oʻzimning uyimda", "uy"),
+        ("O‘z uyi", "uy"),
+        ("o'zimning uyimda", "uy"),
+        ("Qarindoshimnikida", "qarindosh"),
+        ("qarindoshnikida", "qarindosh"),
+    ],
+    ids=["U+2019", "U+02BB", "U+2018", "ascii", "qarindoshim", "qarindosh"],
 )
-async def test_typed_residence_accepts_phone_keyboard_apostrophes(h: Harness, typed: str) -> None:
+async def test_typed_residence_accepts_phone_keyboard_apostrophes(h: Harness, typed: str, code: str) -> None:
     tutor = await h.db.add_tutor("Karimov Aziz", TUTOR)
     group = await h.db.add_group(tutor.id, "DI-21")
     student = make_user(STUDENT)
@@ -569,7 +581,7 @@ async def test_typed_residence_accepts_phone_keyboard_apostrophes(h: Harness, ty
     await h.feed(text_update(student, typed))
     assert h.last_text(STUDENT) == texts.REG_ASK_ADDRESS
     assert await h.state_of(STUDENT) == Registration.address.state
-    assert (await h.data_of(STUDENT))["residence"] == "uy"
+    assert (await h.data_of(STUDENT))["residence"] == code
 
 
 # ================================================================== (c) tutor == superadmin
@@ -915,10 +927,11 @@ async def test_tutor_export_by_residence(h: Harness) -> None:
     by_res = next(d for d, t in menu_kb.items() if t == texts.BTN_EXCEL_BY_RESIDENCE)
     await h.feed(callback_update(tutor_user, by_res))
     res_kb = inline_buttons(h.last_shown(TUTOR).reply_markup)
-    assert {texts.BTN_RES_TTJ, texts.BTN_RES_KVARTIRA} <= set(res_kb.values())
+    assert {texts.BTN_RES_TTJ, texts.BTN_RES_KVARTIRA, texts.BTN_RES_QARINDOSH} <= set(res_kb.values())
     ttj_button = next(d for d, t in res_kb.items() if t == texts.BTN_RES_TTJ)
     kv_button = next(d for d, t in res_kb.items() if t == texts.BTN_RES_KVARTIRA)
     uy_button = next(d for d, t in res_kb.items() if "uyi" in t.lower())
+    rel_button = next(d for d, t in res_kb.items() if t == texts.BTN_RES_QARINDOSH)
 
     await h.feed(callback_update(tutor_user, ttj_button))
     docs = h.documents(TUTOR)
@@ -941,9 +954,33 @@ async def test_tutor_export_by_residence(h: Harness) -> None:
     await h.feed(callback_update(tutor_user, uy_button))
     assert h.last_text(TUTOR) == texts.NO_DATA and len(h.documents(TUTOR)) == 2
 
+    # a student staying with relatives: absent from the sheets above, gets a sheet of their own
+    await register(
+        h,
+        make_user(4007),
+        tutor.id,
+        g2.id,
+        RegInput(
+            full_name="Rahimov Jasur",
+            phone="+998909999999",
+            residence_button=texts.BTN_RES_QARINDOSH,
+            address="Samarqand, Registon 3",
+        ),
+    )
+    await h.feed(callback_update(tutor_user, rel_button))
+    docs = h.documents(TUTOR)
+    assert len(docs) == 3
+    assert re.fullmatch(r"Karimov_Aziz_Qarindoshinikida_\d{4}-\d{2}-\d{2}\.xlsx", docs[2].document.filename)
+    wb = load_xlsx(docs[2].document)
+    assert wb.sheetnames == ["Qarindoshinikida"]
+    rows = sheet_rows(wb.worksheets[0])
+    assert [(r[5], r[1], r[6], r[7]) for r in rows[1:]] == [
+        ("DI-22", "Rahimov Jasur", "Qarindoshinikida", "Samarqand, Registon 3")
+    ]
+
     # an invalid residence code in callback data is rejected, not exported
     await h.feed(callback_update(tutor_user, "tut:excel_res_pick:0:hotel"))
-    assert len(h.documents(TUTOR)) == 2
+    assert len(h.documents(TUTOR)) == 3
     assert_all_callbacks_answered(h)
 
 

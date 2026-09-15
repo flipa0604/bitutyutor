@@ -11,7 +11,37 @@ import aiosqlite
 
 from .models import RESIDENCE_VALUES, BotUser, Group, Student, TestUser, Tutor
 
-SCHEMA = """
+_RESIDENCE_CHECK = "CHECK (residence IN ({}))".format(",".join(f"'{v}'" for v in RESIDENCE_VALUES))
+"""The ``students.residence`` constraint, spelled from :data:`RESIDENCE_VALUES`. SQLite cannot
+alter a CHECK in place, so a table whose stored constraint no longer contains this text is rebuilt
+in :meth:`Database.init` -- that is what lets a new code be added by appending it to the tuple."""
+
+_STUDENTS_COLUMNS = f"""
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_id INTEGER NOT NULL UNIQUE,
+  username TEXT,
+  tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  residence TEXT NOT NULL {_RESIDENCE_CHECK},
+  address TEXT NOT NULL,
+  father_name TEXT NOT NULL,
+  father_phone TEXT NOT NULL,
+  mother_name TEXT NOT NULL,
+  mother_phone TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  edited_at TEXT
+"""
+
+_STUDENT_COLUMN_NAMES = (
+    "id, telegram_id, username, tutor_id, group_id, full_name, phone, direction, residence, address,"
+    " father_name, father_phone, mother_name, mother_phone, created_at, updated_at, edited_at"
+)
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS users (
   telegram_id INTEGER PRIMARY KEY,
   username TEXT,
@@ -37,25 +67,29 @@ CREATE TABLE IF NOT EXISTS groups (
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   UNIQUE(tutor_id, name)
 );
-CREATE TABLE IF NOT EXISTS students (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  telegram_id INTEGER NOT NULL UNIQUE,
-  username TEXT,
-  tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
-  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  full_name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  direction TEXT NOT NULL,
-  residence TEXT NOT NULL CHECK (residence IN ('ttj','kvartira','uy')),
-  address TEXT NOT NULL,
-  father_name TEXT NOT NULL,
-  father_phone TEXT NOT NULL,
-  mother_name TEXT NOT NULL,
-  mother_phone TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-  edited_at TEXT
-);
+CREATE TABLE IF NOT EXISTS students ({_STUDENTS_COLUMNS});
+"""
+
+# The documented way to change a constraint in SQLite: build the table afresh, copy the rows over
+# (ids included, so nothing referring to a student changes), swap the names. Foreign keys are off
+# for the duration as the docs prescribe; the pragma only takes effect outside a transaction, which
+# is why it brackets the explicit BEGIN/COMMIT instead of sitting inside it. The AUTOINCREMENT
+# counter is carried over too, otherwise it would restart at the highest surviving id and hand a
+# deleted student's id to the next one; DROP TABLE removes the old counter and RENAME keeps the new.
+_REBUILD_STUDENTS = f"""
+PRAGMA foreign_keys = OFF;
+BEGIN;
+CREATE TABLE students_new ({_STUDENTS_COLUMNS});
+INSERT INTO students_new ({_STUDENT_COLUMN_NAMES}) SELECT {_STUDENT_COLUMN_NAMES} FROM students;
+INSERT INTO sqlite_sequence (name, seq)
+  SELECT 'students_new', 0 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'students_new');
+UPDATE sqlite_sequence
+  SET seq = MAX(seq, COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'students'), 0))
+  WHERE name = 'students_new';
+DROP TABLE students;
+ALTER TABLE students_new RENAME TO students;
+COMMIT;
+PRAGMA foreign_keys = ON;
 """
 
 _STUDENT_SELECT = """
@@ -119,6 +153,13 @@ def _row_to_tutor(row: aiosqlite.Row) -> Tutor:
 async def _existing_columns(conn: aiosqlite.Connection, table: str) -> set[str]:
     async with conn.execute(f"PRAGMA table_info({table})") as cur:
         return {row["name"] for row in await cur.fetchall()}
+
+
+async def _table_sql(conn: aiosqlite.Connection, table: str) -> str:
+    """The ``CREATE TABLE`` text SQLite keeps for ``table`` (empty when there is no such table)."""
+    async with conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)) as cur:
+        row = await cur.fetchone()
+    return str(row["sql"]) if row else ""
 
 
 def _row_to_test_user(row: aiosqlite.Row) -> TestUser:
@@ -212,6 +253,11 @@ class Database:
         # added after the first release have to be brought in explicitly.
         if "edited_at" not in await _existing_columns(conn, "students"):
             await conn.execute("ALTER TABLE students ADD COLUMN edited_at TEXT")
+        # A residence code added after the table was created is rejected by the stored CHECK
+        # constraint until the table is rebuilt with the current one (after the column above, which
+        # the copy needs). ``executescript`` commits whatever is pending first, so the pragma works.
+        if _RESIDENCE_CHECK not in await _table_sql(conn, "students"):
+            await conn.executescript(_REBUILD_STUDENTS)
         # Students saved before the users table existed have obviously pressed /start, so seed them
         # instead of showing a half-empty list until each of them happens to come back.
         await conn.execute(_BACKFILL_USERS)

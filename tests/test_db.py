@@ -389,6 +389,87 @@ async def test_older_database_gains_the_edited_at_column(tmp_path: Path) -> None
     await db.close()
 
 
+async def test_older_database_accepts_a_residence_added_later(tmp_path: Path) -> None:
+    """A table whose CHECK predates ``qarindosh`` is rebuilt: rows, ids and the id counter survive."""
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE tutors (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          telegram_id INTEGER NOT NULL UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE groups (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+          UNIQUE(tutor_id, name)
+        );
+        CREATE TABLE students (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          telegram_id INTEGER NOT NULL UNIQUE,
+          username TEXT,
+          tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
+          group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+          full_name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          direction TEXT NOT NULL,
+          residence TEXT NOT NULL CHECK (residence IN ('ttj','kvartira','uy')),
+          address TEXT NOT NULL,
+          father_name TEXT NOT NULL,
+          father_phone TEXT NOT NULL,
+          mother_name TEXT NOT NULL,
+          mother_phone TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+          edited_at TEXT
+        );
+        INSERT INTO tutors (name, telegram_id) VALUES ('Karimov Aziz', 1);
+        INSERT INTO groups (tutor_id, name) VALUES (1, 'DI-21');
+        INSERT INTO students (telegram_id, username, tutor_id, group_id, full_name, phone, direction,
+                              residence, address, father_name, father_phone, mother_name, mother_phone)
+        VALUES (100, 'vali', 1, 1, 'Zokirov Vali', '+998901234567', 'Dasturiy injiniring',
+                'uy', 'Toshkent, Chilonzor 5', 'Ota', '+998901111111', 'Ona', '+998902222222'),
+               (101, NULL, 1, 1, 'Ketgan Talaba', '+998900000000', 'X',
+                'ttj', 'TTJ', 'Ota', '+998901111111', 'Ona', '+998902222222');
+        DELETE FROM students WHERE telegram_id = 101;
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = Database(path)
+    await db.init()
+    kept = await db.get_student_by_telegram_id(100)
+    assert kept is not None
+    assert kept.id == 1 and kept.full_name == "Zokirov Vali" and kept.residence == "uy"
+    assert kept.address == "Toshkent, Chilonzor 5" and kept.tutor_name == "Karimov Aziz" and kept.edited_at is None
+
+    saved, is_update = await db.upsert_student(
+        **student_kwargs(102, 1, 1, residence="qarindosh", address="Samarqand, Registon 3")
+    )
+    assert not is_update and saved.residence == "qarindosh" and saved.address == "Samarqand, Registon 3"
+    assert saved.id == 3  # the deleted student's id is not handed out again
+    assert [s.residence for s in await db.list_students(residence="qarindosh")] == ["qarindosh"]
+
+    # the constraint is still there, only wider; the foreign keys still cascade
+    with pytest.raises(sqlite3.IntegrityError):
+        await db.conn.execute("UPDATE students SET residence = 'hotel' WHERE id = 1")
+    await db.conn.rollback()
+    assert await db.delete_tutor(1)
+    assert await db.list_students() == []
+    await db.close()
+
+    # a second start finds the table up to date and leaves it alone
+    again = Database(path)
+    await again.init()
+    assert await again.list_students() == []
+    await again.close()
+
+
 async def test_test_user_list_prefers_the_live_profile_name(db: Database) -> None:
     """The stored label is only a fallback for someone who has never pressed /start."""
     assert await db.add_test_user(500, "Forward orqali olingan ism") is True

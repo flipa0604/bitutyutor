@@ -117,20 +117,21 @@ def test_build_students_workbook_headers_rows_and_labels() -> None:
         make_student(1, T1, G1, "ttj", username="first"),
         make_student(2, T1, G1, "kvartira"),
         make_student(3, T1, G2, "uy"),
+        make_student(4, T1, G2, "qarindosh"),
     ]
     wb = load(build_students_workbook([("Sheet A", students), ("Empty", [])]))
     assert wb.sheetnames == ["Sheet A", "Empty"]
 
     ws = wb["Sheet A"]
     assert [c.value for c in ws[1]] == list(HEADERS)
-    assert ws.max_row == 4
+    assert ws.max_row == 5
     assert ws.freeze_panes == "A2"
-    assert ws.auto_filter.ref == "A1:P4"
+    assert ws.auto_filter.ref == "A1:P5"
     assert ws["A1"].font.bold
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))
-    assert [r[0] for r in rows] == [1, 2, 3]
-    assert [r[6] for r in rows] == ["TTJ", "Kvartira", "O'z uyi"]
+    assert [r[0] for r in rows] == [1, 2, 3, 4]
+    assert [r[6] for r in rows] == ["TTJ", "Kvartira", "O'z uyi", "Qarindoshinikida"]
     assert rows[0][1] == "Talaba 1"
     assert rows[0][4] == "Karimov Aziz" and rows[0][5] == "DI-21"
     assert rows[0][12] == "@first" and rows[1][12] is None

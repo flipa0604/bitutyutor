@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-RESIDENCE_VALUES: tuple[str, ...] = ("ttj", "kvartira", "uy")
+RESIDENCE_VALUES: tuple[str, ...] = ("ttj", "kvartira", "uy", "qarindosh")
+"""Residence codes stored in ``students.residence``; every code but ``ttj`` comes with a street
+address. Appending a code here is enough for the database (``bot.db`` rebuilds its CHECK constraint
+on the next start); the keyboards and the Excel filter still need a button and a label."""
 
 
 @dataclass(frozen=True, slots=True)

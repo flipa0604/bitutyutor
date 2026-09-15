@@ -25,6 +25,7 @@ BTN_SEND_CONTACT = "📱 Raqamni yuborish"
 BTN_RES_TTJ = "🏠 TTJ"
 BTN_RES_KVARTIRA = "🏢 Kvartira"
 BTN_RES_UY = "🏡 O'zimning uyimda"
+BTN_RES_QARINDOSH = "🏘️ Qarindoshinikida"
 
 BTN_ADMIN_TUTORS = "👨‍🏫 Tyutorlar ro'yxati"
 BTN_ADMIN_ADD_TUTOR = "➕ Tyutor qo'shish"
@@ -70,8 +71,18 @@ BTN_EDIT_MOTHER_PHONE = "📞 Onasining tel"
 
 # --------------------------------------------------------------- residence
 
-RESIDENCE_LABELS: dict[str, str] = {"ttj": "TTJ", "kvartira": "Kvartira", "uy": "O'z uyi"}
-RESIDENCE_BUTTONS: dict[str, str] = {BTN_RES_TTJ: "ttj", BTN_RES_KVARTIRA: "kvartira", BTN_RES_UY: "uy"}
+RESIDENCE_LABELS: dict[str, str] = {
+    "ttj": "TTJ",
+    "kvartira": "Kvartira",
+    "uy": "O'z uyi",
+    "qarindosh": "Qarindoshinikida",
+}
+RESIDENCE_BUTTONS: dict[str, str] = {
+    BTN_RES_TTJ: "ttj",
+    BTN_RES_KVARTIRA: "kvartira",
+    BTN_RES_UY: "uy",
+    BTN_RES_QARINDOSH: "qarindosh",
+}
 _RESIDENCE_ALIASES: dict[str, str] = {  # keys use the ASCII apostrophe; see ``_APOSTROPHES_RE``
     "ttj": "ttj",
     "kvartira": "kvartira",
@@ -80,6 +91,12 @@ _RESIDENCE_ALIASES: dict[str, str] = {  # keys use the ASCII apostrophe; see ``_
     "o'z uyi": "uy",
     "o'z uyim": "uy",
     "uyimda": "uy",
+    "qarindosh": "qarindosh",
+    "qarindoshnikida": "qarindosh",
+    "qarindoshinikida": "qarindosh",
+    "qarindoshimnikida": "qarindosh",
+    "qarindoshlarnikida": "qarindosh",
+    "qarindoshlarimnikida": "qarindosh",
 }
 # Phone keyboards type the Uzbek apostrophe as ’ (iOS/Android smart punctuation), ʻ (Gboard's Uzbek
 # layout, the official letter), ‘, ʼ, ` or ´; all of them mean the same word.
@@ -91,7 +108,7 @@ def residence_label(value: str) -> str:
 
 
 def parse_residence(text: str | None) -> str | None:
-    """Map a residence button label (or the same words typed) to ``ttj`` / ``kvartira`` / ``uy``."""
+    """Map a residence button label (or the same words typed) to a ``RESIDENCE_VALUES`` code."""
     if not text:
         return None
     value = text.strip()
@@ -311,7 +328,9 @@ REG_NAME_INVALID = "❗️ F.I.SH noto'g'ri: kamida ikki so'z, raqamlarsiz, 3–
 REG_ASK_DIRECTION = "🎓 Yo'nalishingizni kiriting (masalan: Dasturiy injiniring):"
 REG_DIRECTION_INVALID = "❗️ Yo'nalish 2–150 belgidan iborat bo'lishi kerak. Qaytadan kiriting:"
 REG_ASK_RESIDENCE = "🏠 Qayerda turasiz?"
-REG_RESIDENCE_INVALID = "❗️ Pastdagi tugmalardan birini tanlang: 🏠 TTJ, 🏢 Kvartira yoki 🏡 O'zimning uyimda."
+REG_RESIDENCE_INVALID = (
+    "❗️ Pastdagi tugmalardan birini tanlang: 🏠 TTJ, 🏢 Kvartira, 🏡 O'zimning uyimda yoki 🏘️ Qarindoshinikida."
+)
 REG_ASK_ADDRESS = "📍 To'liq manzilingizni kiriting (shahar/tuman, ko'cha, uy):"
 REG_ADDRESS_INVALID = "❗️ Manzil 5–300 belgidan iborat bo'lishi kerak. Qaytadan kiriting:"
 REG_ASK_FATHER_NAME = "👨 Otangizning F.I.SH ini kiriting:"

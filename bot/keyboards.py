@@ -155,7 +155,7 @@ def residence_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=texts.BTN_RES_TTJ), KeyboardButton(text=texts.BTN_RES_KVARTIRA)],
-            [KeyboardButton(text=texts.BTN_RES_UY)],
+            [KeyboardButton(text=texts.BTN_RES_UY), KeyboardButton(text=texts.BTN_RES_QARINDOSH)],
             [KeyboardButton(text=texts.BTN_CANCEL)],
         ],
         resize_keyboard=True,
@@ -321,8 +321,9 @@ def tutor_residence_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_RES_TTJ, callback_data=TutorCb(action=TUT_EXCEL_RES_PICK, value="ttj"))
     b.button(text=texts.BTN_RES_KVARTIRA, callback_data=TutorCb(action=TUT_EXCEL_RES_PICK, value="kvartira"))
     b.button(text=texts.BTN_EXCEL_RES_UY, callback_data=TutorCb(action=TUT_EXCEL_RES_PICK, value="uy"))
+    b.button(text=texts.BTN_RES_QARINDOSH, callback_data=TutorCb(action=TUT_EXCEL_RES_PICK, value="qarindosh"))
     b.button(text=texts.BTN_BACK, callback_data=TutorCb(action=TUT_EXCEL_MENU))
-    b.adjust(3, 1)
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 

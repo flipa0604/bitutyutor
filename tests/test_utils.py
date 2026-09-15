@@ -131,10 +131,15 @@ def test_safe_filename_part() -> None:
         ("🏠 TTJ", "ttj"),
         ("🏢 Kvartira", "kvartira"),
         ("🏡 O'zimning uyimda", "uy"),
+        ("🏘️ Qarindoshinikida", "qarindosh"),
         ("ttj", "ttj"),
         ("Kvartira", "kvartira"),
         ("o'zimning uyimda", "uy"),
         ("uy", "uy"),
+        ("qarindoshinikida", "qarindosh"),
+        ("Qarindoshimnikida", "qarindosh"),
+        ("qarindosh", "qarindosh"),
+        ("qarindoshim", None),
         ("boshqa", None),
         (None, None),
         # apostrophe variants phone keyboards produce: ‘ (U+2018), ’ (U+2019, iOS smart punctuation),
@@ -157,3 +162,4 @@ def test_residence_label() -> None:
     assert residence_label("ttj") == "TTJ"
     assert residence_label("kvartira") == "Kvartira"
     assert residence_label("uy") == "O'z uyi"
+    assert residence_label("qarindosh") == "Qarindoshinikida"
