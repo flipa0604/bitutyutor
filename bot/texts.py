@@ -46,6 +46,10 @@ BTN_TUTOR_GROUPS = "👥 Guruhlarim"
 BTN_TUTOR_ADD_GROUP = "➕ Guruh qo'shish"
 BTN_TUTOR_EXCEL = "📊 Excel yuklab olish"
 BTN_RENAME_GROUP = "✏️ Nomini o'zgartirish"
+BTN_GROUP_STUDENTS = "🎓 Talabalar"  # tutor panel (pick a group first) and every group card
+BTN_TUTOR_GROUP_LIST = "👥 Guruhlari"  # on the superadmin's tutor card
+BTN_SEND_MESSAGE = "✉️ Xabar yuborish"
+BTN_YES_SEND_MESSAGE = "✉️ Ha, xabar yuborish"
 BTN_EXCEL_BY_GROUP = "👥 Guruh bo'yicha"
 BTN_EXCEL_BY_RESIDENCE = "🏠 Turar joy bo'yicha"
 BTN_EXCEL_ALL_GROUPS = "📦 Barcha guruhlar (bitta faylda)"
@@ -144,6 +148,7 @@ HELP_TUTOR = (
     "👨‍🏫 <b>Tyutor buyruqlari</b>\n"
     "/tutor — tyutor panel\n"
     "/groups — guruhlarim\n"
+    "/students — talabalar: guruhni, keyin talabani tanlab xabar yuborish yoki o'chirish\n"
     "/add_group — guruh qo'shish\n"
     "/edit_group — guruh nomini o'zgartirish\n"
     "/delete_group — guruhni o'chirish\n"
@@ -209,6 +214,8 @@ TUTOR_CARD = (
     "🎓 Talabalar: {students} ta\n"
     "🕒 Qo'shilgan: {created_at}"
 )
+TUTOR_GROUP_LIST_TITLE = "👥 <b>{name}</b> — guruhlari ({n} ta). Guruhni tanlang:"
+TUTOR_GROUP_LIST_EMPTY = "📭 <b>{name}</b> tyutorida hali guruhlar yo'q."
 
 
 TEST_USERS_INTRO = (
@@ -312,6 +319,49 @@ def group_button_label(name: str, count: int) -> str:
     return f"{name} — {count} ta talaba"
 
 
+# ------------------------------------------- student management (tutor / superadmin)
+
+STUDENT_PICK_GROUP = "🎓 Qaysi guruh talabalarini ko'rasiz?"
+STUDENT_LIST_TITLE = "🎓 <b>{group}</b> guruhi talabalari ({n} ta){tutor}\n\nTalabani tanlang:"
+STUDENT_LIST_EMPTY = "📭 <b>{group}</b> guruhida hali talabalar yo'q.{tutor}"
+STUDENT_LIST_TUTOR_LINE = "\n👨‍🏫 Tyutor: {tutor}"  # ``{tutor}`` above: this line for a superadmin, "" for the tutor
+STUDENT_CARD_TITLE = "🎓 Talaba ma'lumotlari"
+STUDENT_NOT_FOUND = "❗️ Talaba topilmadi (o'chirilgan bo'lishi mumkin)."
+STUDENT_DELETE_CONFIRM = (
+    "⚠️ Talaba <b>{name}</b> ma'lumotlarini o'chirmoqchimisiz?\n\n"
+    "👥 Guruh: {group}\n\n"
+    "Ro'yxatdan o'tishda kiritgan barcha ma'lumotlari bazadan o'chiriladi va keyingi Excel fayllarida "
+    "ko'rinmaydi. Talaba xohlasa /start orqali qaytadan ro'yxatdan o'ta oladi."
+)
+STUDENT_DELETED_TOAST = "🗑 Talaba o'chirildi"
+STUDENT_DELETED = "🗑 Talaba <b>{name}</b> o'chirildi."
+STUDENT_DELETED_ASK_MESSAGE = STUDENT_DELETED + "\n\nTalabaga xabar yuborasizmi?"
+STUDENT_DELETED_NO_MESSAGE = "🗑 Talaba <b>{name}</b> o'chirildi. Talabaga xabar yuborilmaydi."
+STUDENT_DELETED_MESSAGE_SENT = "🗑 Talaba <b>{name}</b> o'chirildi, xabar yuborildi."
+STUDENT_DELETED_MESSAGE_BLOCKED = (
+    "🗑 Talaba <b>{name}</b> o'chirildi, lekin xabar yetib bormadi — talaba botni bloklagan bo'lishi mumkin."
+)
+STUDENT_DELETED_MESSAGE_FAILED = "🗑 Talaba <b>{name}</b> o'chirildi, lekin xabar yuborilmadi (Telegram xatosi)."
+FAREWELL_STALE = "Bu so'rov eskirgan — talaba allaqachon o'chirilgan, xabarni endi shu yerdan yuborib bo'lmaydi."
+STUDENT_MESSAGE_PROMPT_TOAST = "✍️ Xabar matnini kiriting"
+ASK_STUDENT_MESSAGE = "✍️ <b>{name}</b> uchun xabar matnini kiriting:"
+STUDENT_MESSAGE_INVALID = "❗️ Xabar matni bo'sh bo'lmasligi va {max} belgidan oshmasligi kerak. Qaytadan kiriting:"
+STUDENT_MESSAGE_TEXT_ONLY = (
+    "❗️ Faqat matn yuborish mumkin (rasm, fayl yoki ovozli xabar emas). "
+    "Xabar matnini yozing yoki ❌ Bekor qilish tugmasini bosing."
+)
+STUDENT_MESSAGE_SENT = "✅ Xabar yuborildi: <b>{name}</b>"
+STUDENT_MESSAGE_BLOCKED = "❗️ Xabar yetib bormadi — talaba botni bloklagan bo'lishi mumkin."
+STUDENT_MESSAGE_FAILED = "❗️ Xabar yuborilmadi. Birozdan keyin qaytadan urinib ko'ring."
+# what the student receives; ``text`` is the sender's own words, HTML-escaped
+MESSAGE_TO_STUDENT = (
+    "✉️ <b>Sizga xabar</b>\n{sender}{note}\n\n{text}\n\n<i>ℹ️ Bu xabarga shu yerda javob yozib bo'lmaydi.</i>"
+)
+MESSAGE_SENDER_TUTOR = "👨‍🏫 Kimdan: tyutor {name}"
+MESSAGE_SENDER_ADMIN = "👑 Kimdan: administratsiya"
+MESSAGE_REMOVED_LINE = "\nℹ️ Siz <b>{group}</b> guruhi ro'yxatidan o'chirildingiz."  # ``{note}`` above
+
+
 # ------------------------------------------------------------ registration
 
 REG_NO_TUTORS = "Hozircha tyutorlar qo'shilmagan. Keyinroq urinib ko'ring."
@@ -349,12 +399,15 @@ CARD_TITLE_UPDATE = "🔄 Talaba ma'lumotlarini yangiladi"
 
 STUDENT_HOME_TITLE = "📋 Sizning ma'lumotlaringiz"
 STUDENT_HOME_HINT = "Ma'lumotlaringizni istalgan vaqtda o'zgartirishingiz mumkin."
-STUDENT_NOT_REGISTERED = "Siz hali ro'yxatdan o'tmagansiz. Boshlaymiz 👇"
+STUDENT_NOT_REGISTERED = "Sizning ro'yxatdagi ma'lumotlaringiz topilmadi. Ro'yxatdan o'tishni boshlaymiz 👇"
 EDIT_MENU = "✏️ Qaysi ma'lumotni o'zgartirasiz?"
 EDIT_SAVED = "✅ Saqlandi."
 EDIT_DONE = "✅ Ma'lumotlaringiz yangilandi. Rahmat!"
 EDIT_NOTHING_CHANGED = "Hech narsa o'zgartirilmadi."
-EDIT_GONE = "❗️ Ma'lumotlaringiz topilmadi — tyutoringiz yoki guruhingiz o'chirilgan bo'lishi mumkin."
+EDIT_GONE = (
+    "❗️ Ma'lumotlaringiz topilmadi — tyutoringiz sizni ro'yxatdan o'chirgan yoki guruhingiz o'chirilgan "
+    "bo'lishi mumkin. Qaytadan ro'yxatdan o'tishni boshlaymiz 👇"
+)
 EDIT_ASK_TUTOR = "👨‍🏫 Yangi tyutoringizni tanlang:"
 EDIT_ASK_GROUP = "👥 Yangi guruhingizni tanlang:"
 

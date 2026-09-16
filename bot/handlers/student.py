@@ -453,7 +453,8 @@ async def show_student_home(bot: Bot, user_id: int, state: FSMContext, db: Datab
 
 
 async def _registration_gone(bot: Bot, user_id: int, state: FSMContext, db: Database) -> None:
-    """The row vanished mid-edit (the tutor or group was deleted and cascaded): start over."""
+    """The row vanished mid-edit (deleted by the tutor or a superadmin, or the tutor/group was deleted
+    and cascaded): start over."""
     await state.clear()
     await bot.send_message(user_id, texts.EDIT_GONE, reply_markup=ReplyKeyboardRemove())
     await start_registration(bot, user_id, state, db)

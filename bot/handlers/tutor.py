@@ -28,6 +28,7 @@ from ..keyboards import (
     TUT_GROUPS,
     TUT_PANEL,
     TUT_RENAME,
+    TUT_STUDENTS,
     TUT_VIEW,
     TutorCb,
     cancel_kb,
@@ -147,6 +148,23 @@ async def cb_view(callback: CallbackQuery, callback_data: TutorCb, db: Database,
         return
     await callback.answer()
     await edit_or_send(callback, bot, _group_card(group), tutor_group_card_kb(group.id))
+
+
+# ----------------------------------------------------------- students entry
+
+
+async def cmd_students(message: Message, state: FSMContext, db: Database, tutor: Tutor) -> None:
+    """/students: pick a group, then a student to write to or delete (``bot.handlers.manage``)."""
+    await state.clear()
+    text, kb = await _group_list(db, tutor, action=TUT_STUDENTS, title=texts.STUDENT_PICK_GROUP)
+    await message.answer(text, reply_markup=kb)
+
+
+async def cb_students(callback: CallbackQuery, state: FSMContext, db: Database, tutor: Tutor, bot: Bot) -> None:
+    await state.clear()
+    await callback.answer()
+    text, kb = await _group_list(db, tutor, action=TUT_STUDENTS, title=texts.STUDENT_PICK_GROUP)
+    await edit_or_send(callback, bot, text, kb)
 
 
 # ----------------------------------------------------------------- add group
@@ -355,10 +373,12 @@ def create_router() -> Router:
     msg.register(cmd_edit_group, Command("edit_group"))
     msg.register(cmd_delete_group, Command("delete_group"))
     msg.register(cmd_excel, Command("excel"))
+    msg.register(cmd_students, Command("students"))
 
     cb.register(cb_panel, TutorCb.filter(F.action == TUT_PANEL))
     cb.register(cb_groups, TutorCb.filter(F.action == TUT_GROUPS))
     cb.register(cb_view, TutorCb.filter(F.action == TUT_VIEW))
+    cb.register(cb_students, TutorCb.filter(F.action == TUT_STUDENTS))
 
     # FSM text steps only take free text: other routers' commands/buttons must fall through to them.
     free_text = IsFreeText()

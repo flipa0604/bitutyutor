@@ -26,6 +26,18 @@ class TutorGroupEdit(StatesGroup):
     name = State()
 
 
+class StudentManage(StatesGroup):
+    """A tutor or superadmin messaging or deleting one student (``bot.handlers.manage``).
+
+    ``farewell`` is the "send the deleted student a message?" question; the row is already gone by
+    then, so the recipient's Telegram id and name travel in the FSM data rather than in callbacks.
+    """
+
+    message_text = State()
+    farewell = State()
+    farewell_text = State()
+
+
 class Registration(StatesGroup):
     choose_tutor = State()
     choose_group = State()

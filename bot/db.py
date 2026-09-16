@@ -506,8 +506,8 @@ class Database:
     async def update_student(self, telegram_id: int, /, **fields: Any) -> Student | None:
         """Overwrite single columns of one student, bump ``updated_at`` and return the fresh row.
 
-        Returns ``None`` when no row matched, i.e. the registration is gone (the student's tutor or
-        group was deleted mid-edit and cascaded). Field names are checked against
+        Returns ``None`` when no row matched, i.e. the registration is gone (deleted by staff, or the
+        student's tutor or group was deleted mid-edit and cascaded). Field names are checked against
         ``STUDENT_EDITABLE_FIELDS`` before they reach the statement, so the interpolation below
         cannot carry caller input into the SQL; the values stay bound parameters.
 
@@ -534,6 +534,19 @@ class Database:
     async def get_student_by_telegram_id(self, telegram_id: int) -> Student | None:
         row = await self._fetchone(_STUDENT_SELECT + " WHERE s.telegram_id = ?", (telegram_id,))
         return _row_to_student(row) if row else None
+
+    async def get_student(self, student_id: int) -> Student | None:
+        row = await self._fetchone(_STUDENT_SELECT + " WHERE s.id = ?", (student_id,))
+        return _row_to_student(row) if row else None
+
+    async def delete_student(self, student_id: int, tutor_id: int | None = None) -> bool:
+        """Remove one registration for good; with ``tutor_id`` only if the student still belongs to that
+        tutor, so the ownership check and the delete are one statement (no window for the student to
+        move to another tutor in between). ``False`` when nothing matched: already deleted, or moved."""
+        cur = await self._write(
+            "DELETE FROM students WHERE id = ? AND (? IS NULL OR tutor_id = ?)", (student_id, tutor_id, tutor_id)
+        )
+        return cur.rowcount > 0
 
     async def list_students(
         self,

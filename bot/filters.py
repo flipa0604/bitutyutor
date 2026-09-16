@@ -38,6 +38,21 @@ class IsTutor(BaseFilter):
         return {"tutor": tutor}
 
 
+class IsStaff(BaseFilter):
+    """Passes for superadmins and tutors alike; injects ``is_admin`` and ``tutor`` (``None`` for a
+    superadmin who is not also a tutor). Which students the sender may touch is decided per handler."""
+
+    async def __call__(self, event: TelegramObject, db: Database, settings: Settings) -> bool | dict[str, Any]:
+        user = _event_user(event)
+        if user is None:
+            return False
+        is_admin = settings.is_superadmin(user.id)
+        tutor = await db.get_tutor_by_telegram_id(user.id)
+        if not is_admin and tutor is None:
+            return False
+        return {"is_admin": is_admin, "tutor": tutor}
+
+
 class IsFreeText(BaseFilter):
     """Passes for input a free-text FSM step may store as data.
 

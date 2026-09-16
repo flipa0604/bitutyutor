@@ -74,7 +74,9 @@ sudo systemctl restart bitutyutor
 
 ### Superadmin (`/admin` yoki 👑 Admin panel)
 
-- `/tutors` — tyutorlar ro'yxati, har bir tyutor kartasi (guruhlar va talabalar soni)
+- `/tutors` — tyutorlar ro'yxati, har bir tyutor kartasi (guruhlar va talabalar soni); kartadagi
+  👥 **Guruhlari** orqali istalgan tyutorning guruhiga, undan talabasiga kirib, unga xabar yuborish yoki
+  uni o'chirish mumkin (pastdagi "Talabalarni boshqarish" bo'limiga qarang)
 - `/add_tutor` — tyutor qo'shish (F.I.SH → Telegram ID → tasdiqlash)
 - `/edit_tutor` — tyutor ismini yoki Telegram ID sini o'zgartirish
 - `/delete_tutor` — tyutorni o'chirish (uning guruhlari va talabalari ham o'chiriladi, oldin tasdiq so'raladi)
@@ -87,7 +89,8 @@ sudo systemctl restart bitutyutor
 
 ### Tyutor (`/tutor` yoki 👨‍🏫 Tyutor panel)
 
-- `/groups` — guruhlarim (har birida talabalar soni), guruh kartasi
+- `/groups` — guruhlarim (har birida talabalar soni), guruh kartasi (🎓 Talabalar tugmasi bilan)
+- `/students` — talabalar: guruhni, keyin talabani tanlab xabar yuborish yoki o'chirish
 - `/add_group` — guruh qo'shish (bir tyutorda bir xil nom takrorlanmaydi)
 - `/edit_group` — guruh nomini o'zgartirish
 - `/delete_group` — guruhni o'chirish (talabalar ma'lumoti ham o'chadi, oldin tasdiq so'raladi)
@@ -98,6 +101,22 @@ sudo systemctl restart bitutyutor
   - 📦 **Barcha guruhlar** — `Barchasi` varag'i + har bir guruh uchun alohida varaq
 
 Tyutor faqat **o'z** guruhlari va talabalarini ko'radi.
+
+#### Talabalarni boshqarish (tyutor va superadmin)
+
+Guruh → talaba tanlangach uning to'liq kartasi va ikkita tugma chiqadi:
+
+- ✉️ **Xabar yuborish** — matn kiritiladi va talabaga
+  `✉️ Sizga xabar / 👨‍🏫 Kimdan: tyutor <ism>` sarlavhasi bilan boradi (superadmin yuborsa —
+  `👑 Kimdan: administratsiya`; superadmin talabaning o'z tyutori bo'lsa, tyutor nomi bilan).
+  Faqat matn, 3500 belgigacha. Talaba botni bloklagan bo'lsa, yuboruvchiga shu haqda aytiladi.
+- 🗑 **O'chirish** — tasdiqdan so'ng talabaning ro'yxatdan o'tishda kiritgan barcha ma'lumotlari
+  bazadan o'chiriladi (keyingi Excel fayllarida ham bo'lmaydi). So'ng bot "Talabaga xabar yuborasizmi?"
+  deb so'raydi: ✉️ **Ha** — matn kiritiladi va talabaga qaysi guruh ro'yxatidan o'chirilgani haqidagi
+  izoh bilan boradi; ❌ **Yo'q** — talabaga hech narsa bormaydi. Ikkala holda ham ma'lumotlar o'chirilgan
+  bo'ladi. O'chirilgan talaba xohlasa `/start` orqali qaytadan ro'yxatdan o'ta oladi.
+
+Tyutor faqat o'z talabalarini boshqara oladi; superadmin — hammanikini (tyutor kartasi → 👥 Guruhlari).
 
 ### Talaba (`/start`)
 

@@ -171,6 +171,33 @@ async def test_concurrent_upserts_report_exactly_one_new_registration(db: Databa
     assert len(await db.list_students()) == 1
 
 
+async def test_get_and_delete_student(db: Database) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", 1)
+    group = await db.add_group(tutor.id, "DI-21")
+    saved, _ = await db.upsert_student(**student_kwargs(100, tutor.id, group.id, full_name="Zokirov Vali"))
+    await db.upsert_student(**student_kwargs(101, tutor.id, group.id, full_name="Aliyev Olim"))
+
+    by_id = await db.get_student(saved.id)
+    assert by_id is not None and by_id.telegram_id == 100 and by_id.full_name == "Zokirov Vali"
+    assert by_id.tutor_name == "Karimov Aziz" and by_id.group_name == "DI-21"
+    assert await db.get_student(saved.id + 1000) is None
+
+    other = await db.add_tutor("Boshqa Tyutor", 2)
+    assert await db.delete_student(saved.id, tutor_id=other.id) is False  # not that tutor's student
+    assert await db.get_student(saved.id) is not None
+    assert await db.delete_student(saved.id, tutor_id=tutor.id) is True
+    assert await db.delete_student(saved.id) is False  # the second tap finds nothing
+    assert await db.get_student(saved.id) is None
+    assert await db.get_student_by_telegram_id(100) is None
+    assert [s.full_name for s in await db.list_students(group_id=group.id)] == ["Aliyev Olim"]
+    refreshed = await db.get_group(group.id)
+    assert refreshed is not None and refreshed.student_count == 1
+
+    # a deleted student can register again from scratch and gets a fresh row
+    again, is_update = await db.upsert_student(**student_kwargs(100, tutor.id, group.id))
+    assert not is_update and again.id != saved.id
+
+
 async def test_upsert_student_validates_residence_and_group(db: Database) -> None:
     tutor = await db.add_tutor("T", 1)
     other = await db.add_tutor("O", 2)

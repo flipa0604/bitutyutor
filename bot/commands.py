@@ -32,6 +32,7 @@ ADMIN_COMMANDS: tuple[BotCommand, ...] = (
 TUTOR_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="tutor", description="Tyutor panel"),
     BotCommand(command="groups", description="Guruhlarim"),
+    BotCommand(command="students", description="Talabalar (xabar yuborish, o'chirish)"),
     BotCommand(command="add_group", description="Guruh qo'shish"),
     BotCommand(command="edit_group", description="Guruh nomini o'zgartirish"),
     BotCommand(command="delete_group", description="Guruhni o'chirish"),

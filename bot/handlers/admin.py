@@ -33,6 +33,7 @@ from ..keyboards import (
     ADM_EXCEL_ALL,
     ADM_EXCEL_PICK,
     ADM_EXCEL_TUTOR,
+    ADM_GROUPS,
     ADM_LIST,
     ADM_PANEL,
     ADM_SAVE,
@@ -46,6 +47,7 @@ from ..keyboards import (
     admin_back_kb,
     admin_confirm_delete_kb,
     admin_edit_field_kb,
+    admin_group_list_kb,
     admin_panel_kb,
     admin_save_kb,
     admin_tutor_card_kb,
@@ -242,6 +244,21 @@ async def cb_view(callback: CallbackQuery, callback_data: AdminCb, db: Database,
         return
     await callback.answer()
     await edit_or_send(callback, bot, await _tutor_card(db, tutor), admin_tutor_card_kb(tutor.id))
+
+
+async def cb_groups(callback: CallbackQuery, callback_data: AdminCb, state: FSMContext, db: Database, bot: Bot) -> None:
+    """A tutor's groups; each opens its students in admin mode (``bot.handlers.manage``)."""
+    tutor = await _load_tutor(callback, db, callback_data.tutor_id)
+    if tutor is None:
+        return
+    await state.clear()
+    await callback.answer()
+    groups = await db.list_groups(tutor.id)
+    if groups:
+        text = texts.TUTOR_GROUP_LIST_TITLE.format(name=hesc(tutor.name), n=len(groups))
+    else:
+        text = texts.TUTOR_GROUP_LIST_EMPTY.format(name=hesc(tutor.name))
+    await edit_or_send(callback, bot, text, admin_group_list_kb(groups, tutor.id))
 
 
 # ---------------------------------------------------------------- add tutor
@@ -518,6 +535,7 @@ def create_router() -> Router:
     cb.register(cb_panel, AdminCb.filter(F.action == ADM_PANEL))
     cb.register(cb_list, AdminCb.filter(F.action == ADM_LIST))
     cb.register(cb_view, AdminCb.filter(F.action == ADM_VIEW))
+    cb.register(cb_groups, AdminCb.filter(F.action == ADM_GROUPS))
 
     # FSM text steps only take free text: other routers' commands/buttons must fall through to them.
     free_text = IsFreeText()

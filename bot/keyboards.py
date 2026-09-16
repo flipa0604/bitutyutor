@@ -14,7 +14,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from . import texts
-from .models import Group, TestUser, Tutor
+from .models import Group, Student, TestUser, Tutor
 
 # ------------------------------------------------------------ callback data
 
@@ -68,11 +68,31 @@ class EditCb(CallbackData, prefix="edt"):
     field: str = ""
 
 
+VIA_TUTOR = "t"
+VIA_ADMIN = "a"
+
+
+class StuCb(CallbackData, prefix="stu"):
+    """Student management by a tutor or superadmin, packed as ``stu:{action}:{id}:{via}``.
+
+    ``id`` is a group id for :data:`STU_LIST` and a student id otherwise -- for the farewell buttons
+    the id of the row just deleted, which AUTOINCREMENT never hands out again.
+    ``via`` records which panel the screen was reached from -- ``t`` (tutor) or ``a`` (admin) -- and
+    only decides where "back" leads; neither permission nor how a message is signed depends on it
+    (``bot.handlers.manage.Actor`` derives both from the sender's real roles).
+    """
+
+    action: str
+    id: int = 0
+    via: str = VIA_TUTOR
+
+
 # admin actions
 ADM_PANEL = "panel"
 ADM_LIST = "list"
 ADM_ADD = "add"
 ADM_VIEW = "view"
+ADM_GROUPS = "groups"  # a tutor's group list, the superadmin's way into student management
 ADM_EDIT_PICK = "edit_pick"
 ADM_EDIT_NAME = "edit_name"
 ADM_EDIT_TG = "edit_tg"
@@ -98,6 +118,7 @@ TUT_EXCEL_GROUP = "excel_group"
 TUT_EXCEL_RES = "excel_res"
 TUT_EXCEL_RES_PICK = "excel_res_pick"
 TUT_EXCEL_ALL = "excel_all"
+TUT_STUDENTS = "students"  # pick a group whose students to manage
 
 # registration actions
 REG_TUTOR = "tutor"
@@ -119,6 +140,15 @@ EDT_RESIDENCE = "res"
 EDT_TUTOR_GROUP = "tg"
 EDT_DONE = "done"
 EDT_REREGISTER = "again"
+
+# student management actions (tutor / superadmin)
+STU_LIST = "list"  # students of a group (id = group id)
+STU_VIEW = "view"  # one student's card
+STU_MESSAGE = "msg"  # write to the student
+STU_DELETE = "del"  # ask for confirmation
+STU_CONFIRM_DELETE = "delok"
+STU_BYE_YES = "bye_y"  # after deletion: message the former student (id = the deleted row's id)
+STU_BYE_NO = "bye_n"
 
 
 # ---------------------------------------------------------- reply keyboards
@@ -222,10 +252,24 @@ def admin_tutor_card_kb(tutor_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=texts.BTN_EDIT_NAME, callback_data=AdminCb(action=ADM_EDIT_NAME, tutor_id=tutor_id))
     b.button(text=texts.BTN_EDIT_TG, callback_data=AdminCb(action=ADM_EDIT_TG, tutor_id=tutor_id))
+    b.button(text=texts.BTN_TUTOR_GROUP_LIST, callback_data=AdminCb(action=ADM_GROUPS, tutor_id=tutor_id))
     b.button(text=texts.BTN_EXCEL, callback_data=AdminCb(action=ADM_EXCEL_TUTOR, tutor_id=tutor_id))
     b.button(text=texts.BTN_DELETE, callback_data=AdminCb(action=ADM_DELETE, tutor_id=tutor_id))
     b.button(text=texts.BTN_BACK, callback_data=AdminCb(action=ADM_LIST))
-    b.adjust(1, 1, 2, 1)
+    b.adjust(1, 1, 2, 1, 1)
+    return b.as_markup()
+
+
+def admin_group_list_kb(groups: Sequence[Group], tutor_id: int) -> InlineKeyboardMarkup:
+    """A tutor's groups as seen by a superadmin; each opens that group's students in admin mode."""
+    b = InlineKeyboardBuilder()
+    for group in groups:
+        b.button(
+            text=texts.group_button_label(group.name, group.student_count),
+            callback_data=StuCb(action=STU_LIST, id=group.id, via=VIA_ADMIN),
+        )
+    b.adjust(1)
+    b.row(_back_button(texts.BTN_BACK, AdminCb(action=ADM_VIEW, tutor_id=tutor_id).pack()))
     return b.as_markup()
 
 
@@ -267,20 +311,23 @@ def tutor_panel_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=texts.BTN_TUTOR_GROUPS, callback_data=TutorCb(action=TUT_GROUPS))
     b.button(text=texts.BTN_TUTOR_ADD_GROUP, callback_data=TutorCb(action=TUT_ADD))
+    b.button(text=texts.BTN_GROUP_STUDENTS, callback_data=TutorCb(action=TUT_STUDENTS))
     b.button(text=texts.BTN_TUTOR_EXCEL, callback_data=TutorCb(action=TUT_EXCEL_MENU))
-    b.adjust(2, 1)
+    b.adjust(2, 1, 1)
     return b.as_markup()
 
 
 def tutor_group_list_kb(
     groups: Sequence[Group], action: str = TUT_VIEW, back_action: str = TUT_PANEL
 ) -> InlineKeyboardMarkup:
+    """The tutor's groups. ``action=TUT_STUDENTS`` makes each button open the group's student list."""
     b = InlineKeyboardBuilder()
     for group in groups:
-        b.button(
-            text=texts.group_button_label(group.name, group.student_count),
-            callback_data=TutorCb(action=action, group_id=group.id),
-        )
+        if action == TUT_STUDENTS:
+            data = StuCb(action=STU_LIST, id=group.id, via=VIA_TUTOR).pack()
+        else:
+            data = TutorCb(action=action, group_id=group.id).pack()
+        b.button(text=texts.group_button_label(group.name, group.student_count), callback_data=data)
     b.adjust(1)
     if not groups:
         b.row(InlineKeyboardButton(text=texts.BTN_TUTOR_ADD_GROUP, callback_data=TutorCb(action=TUT_ADD).pack()))
@@ -290,11 +337,12 @@ def tutor_group_list_kb(
 
 def tutor_group_card_kb(group_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_GROUP_STUDENTS, callback_data=StuCb(action=STU_LIST, id=group_id, via=VIA_TUTOR))
     b.button(text=texts.BTN_RENAME_GROUP, callback_data=TutorCb(action=TUT_RENAME, group_id=group_id))
     b.button(text=texts.BTN_DELETE, callback_data=TutorCb(action=TUT_DELETE, group_id=group_id))
     b.button(text=texts.BTN_EXCEL, callback_data=TutorCb(action=TUT_EXCEL_GROUP, group_id=group_id))
     b.button(text=texts.BTN_BACK, callback_data=TutorCb(action=TUT_GROUPS))
-    b.adjust(2, 1, 1)
+    b.adjust(1, 2, 1, 1)
     return b.as_markup()
 
 
@@ -396,4 +444,53 @@ def student_edit_field_kb(residence: str) -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_EDIT_MOTHER_PHONE, callback_data=EditCb(action=EDT_FIELD, field="mother_phone"))
     b.button(text=texts.BTN_EDIT_DONE, callback_data=EditCb(action=EDT_DONE))
     b.adjust(*rows, 2, 2, 1)
+    return b.as_markup()
+
+
+# ------------------------------------- inline: student management (tutor / superadmin)
+
+
+def _students_back_button(group: Group, via: str) -> InlineKeyboardButton:
+    """Back from a group's student list: the tutor's group card, or the superadmin's group list."""
+    if via == VIA_ADMIN:
+        data = AdminCb(action=ADM_GROUPS, tutor_id=group.tutor_id).pack()
+    else:
+        data = TutorCb(action=TUT_VIEW, group_id=group.id).pack()
+    return _back_button(texts.BTN_BACK, data)
+
+
+def student_list_kb(students: Sequence[Student], group: Group, via: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for student in students:
+        b.button(text=student.full_name, callback_data=StuCb(action=STU_VIEW, id=student.id, via=via))
+    b.adjust(1)
+    b.row(_students_back_button(group, via))
+    return b.as_markup()
+
+
+def student_manage_kb(student: Student, via: str) -> InlineKeyboardMarkup:
+    """Under a student's card: write to them, delete them, or back to their group's list."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_SEND_MESSAGE, callback_data=StuCb(action=STU_MESSAGE, id=student.id, via=via))
+    b.button(text=texts.BTN_DELETE, callback_data=StuCb(action=STU_DELETE, id=student.id, via=via))
+    b.button(text=texts.BTN_BACK, callback_data=StuCb(action=STU_LIST, id=student.group_id, via=via))
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
+def student_confirm_delete_kb(student: Student, via: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_YES_DELETE, callback_data=StuCb(action=STU_CONFIRM_DELETE, id=student.id, via=via))
+    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_VIEW, id=student.id, via=via))
+    b.adjust(2)
+    return b.as_markup()
+
+
+def student_farewell_kb(student_id: int, via: str) -> InlineKeyboardMarkup:
+    """"Message the deleted student?" -- carries the deleted row's id so a button left over from an
+    earlier deletion can be told apart from the current question."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_YES_SEND_MESSAGE, callback_data=StuCb(action=STU_BYE_YES, id=student_id, via=via))
+    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_BYE_NO, id=student_id, via=via))
+    b.adjust(2)
     return b.as_markup()
