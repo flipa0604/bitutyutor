@@ -1568,6 +1568,7 @@ async def test_setup_bot_commands_scopes(h: Harness) -> None:
         "add_tutor",
         "edit_tutor",
         "delete_tutor",
+        "broadcast",
     }
     assert {"tutor", "groups", "add_group", "edit_group", "delete_group", "excel"} <= by_scope[TUTOR]
     assert "admin" not in by_scope[TUTOR]

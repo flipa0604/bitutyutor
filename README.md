@@ -86,6 +86,13 @@ sudo systemctl restart bitutyutor
   o'chirish. Faqat shu ro'yxatdagilar qayta ro'yxatdan o'ta oladi (pastga qarang)
 - 📊 Excel (barcha tyutorlar) — bitta faylda `Barchasi` varag'i + har bir tyutor uchun alohida varaq
 - 📊 Excel (tyutor bo'yicha) — tanlangan tyutorning to'liq fayli
+- `/broadcast` yoki 📢 **Hammaga xabar** — botni ishga tushirgan **barcha** foydalanuvchilarga (talabalar,
+  tyutorlar, boshqa adminlar) bir martada xabar yuborish. Qadamlar: ✍️ matn (majburiy) → 🖼 rasm → 🎬 video →
+  🎤 ovozli xabar (uchtasi ixtiyoriy, ⏭ bilan o'tkaziladi, har birida bir nechta yuborish mumkin, rasm/video
+  izohi bilan). Oxirida ko'rib chiqish ekrani: ➕ Matn / Rasm / Video / Ovozli xabar bilan yana qism qo'shish
+  (yoki shunchaki yuborish), 🗑 oxirgisini o'chirish, 👁 o'zingizga yuborib ko'rish, 📤 yuborish → tasdiq.
+  Xabar Telegram'ning `copyMessage` orqali asl holida (formatlash, izohlar bilan, "forward" belgisi yo'q)
+  qism-qism boradi; ko'pi bilan 10 ta qism. Yuborish tugagach hisobot: yetib bordi / botni bloklagan / xato.
 
 ### Tyutor (`/tutor` yoki 👨‍🏫 Tyutor panel)
 

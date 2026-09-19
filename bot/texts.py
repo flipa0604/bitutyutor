@@ -34,6 +34,17 @@ BTN_ADMIN_TEST_USERS = "🧪 Test userlar"
 BTN_ADD_TEST_USER = "➕ Test user qo'shish"
 BTN_ADMIN_EXCEL_ALL = "📊 Excel (barcha tyutorlar)"
 BTN_ADMIN_EXCEL_PICK = "📊 Excel (tyutor bo'yicha)"
+BTN_ADMIN_BROADCAST = "📢 Hammaga xabar"
+BTN_BC_SKIP = "⏭ O'tkazib yuborish"
+BTN_BC_CONTINUE = "➡️ Davom etish"
+BTN_BC_ADD_TEXT = "➕ Matn"
+BTN_BC_ADD_PHOTO = "➕ Rasm"
+BTN_BC_ADD_VIDEO = "➕ Video"
+BTN_BC_ADD_VOICE = "➕ Ovozli xabar"
+BTN_BC_REMOVE_LAST = "🗑 Oxirgisini o'chirish"
+BTN_BC_PREVIEW = "👁 Ko'rib chiqish (o'zimga yuborish)"
+BTN_BC_SEND = "📤 Hammaga yuborish"
+BTN_BC_CONFIRM = "✅ Ha, yuborish"
 BTN_EDIT_NAME = "✏️ Ismini o'zgartirish"
 BTN_EDIT_TG = "🆔 Telegram ID o'zgartirish"
 BTN_DELETE = "🗑 O'chirish"
@@ -142,7 +153,8 @@ HELP_ADMIN = (
     "/test_users — qayta ro'yxatdan o'ta oladigan test userlar\n"
     "/add_tutor — tyutor qo'shish\n"
     "/edit_tutor — tyutorni tahrirlash\n"
-    "/delete_tutor — tyutorni o'chirish"
+    "/delete_tutor — tyutorni o'chirish\n"
+    "/broadcast — hammaga xabar yuborish (matn + ixtiyoriy rasm, video, ovozli xabar)"
 )
 HELP_TUTOR = (
     "👨‍🏫 <b>Tyutor buyruqlari</b>\n"
@@ -317,6 +329,57 @@ EXCEL_CAPTION = "📊 {title}\n🎓 Talabalar: {count} ta"
 
 def group_button_label(name: str, count: int) -> str:
     return f"{name} — {count} ta talaba"
+
+
+# ------------------------------------------------------- broadcast (superadmin)
+
+BC_PART_LABELS: dict[str, str] = {
+    "text": "📝 Matn",
+    "photo": "🖼 Rasm",
+    "video": "🎬 Video",
+    "voice": "🎤 Ovozli xabar",
+}
+BC_ASK_TEXT = (
+    "📢 <b>Hammaga xabar</b>\n\n"
+    "1/4 — ✍️ Xabar matnini kiriting (majburiy). Bu matn hamma foydalanuvchiga birinchi bo'lib boradi; "
+    "Telegram'dagi formatlash (qalin, havola va h.k.) saqlanadi."
+)
+BC_TEXT_REQUIRED = "❗️ Avval matn kiriting — bu majburiy. Rasm, video va ovozli xabar keyingi qadamlarda so'raladi."
+BC_ASK_PHOTO = (
+    "2/4 — 🖼 Rasm qo'shasizmi? (ixtiyoriy)\n"
+    "Rasm yuboring (bir nechta bo'lishi mumkin, izohi bilan ham) yoki ⏭ tugmasini bosing."
+)
+BC_ASK_VIDEO = "3/4 — 🎬 Video qo'shasizmi? (ixtiyoriy)\nVideo yuboring yoki ⏭ tugmasini bosing."
+BC_ASK_VOICE = "4/4 — 🎤 Ovozli xabar qo'shasizmi? (ixtiyoriy)\nOvozli xabar yuboring yoki ⏭ tugmasini bosing."
+BC_PART_ADDED = "✅ {label} qo'shildi (xabarda {n} ta qism). Yana yuborishingiz yoki davom etishingiz mumkin."
+BC_UNSUPPORTED = "❗️ Faqat matn, rasm, video yoki ovozli xabar qo'shish mumkin."
+BC_TOO_MANY_PARTS = "❗️ Bitta xabarda ko'pi bilan {max} ta qism bo'lishi mumkin. Keraksizini 🗑 bilan o'chiring."
+BC_REVIEW_TITLE = "📢 <b>Xabar tayyor.</b> Tarkibi:"
+BC_REVIEW_FOOTER = (
+    "👥 Qabul qiluvchilar: <b>{n}</b> ta foydalanuvchi (botni ishga tushirgan hamma).\n\n"
+    "➕ bilan qism qo'shing, 👁 bilan o'zingizga yuborib ko'ring, so'ng 📤 bosing."
+)
+BC_ASK_MORE = "➕ {label} yuboring:"
+BC_PREVIEW_DONE = "👆 Xabar shu ko'rinishda boradi."
+BC_PREVIEW_FAILED = "❗️ {label} nusxalanmadi — asl xabar o'chirilgan bo'lishi mumkin. Uni 🗑 bilan olib tashlang."
+BC_NOTHING_TO_REMOVE = "Birinchi matn majburiy — uni o'chirib bo'lmaydi."
+BC_CONFIRM = "⚠️ Xabar ({parts} ta qism) <b>{n}</b> ta foydalanuvchiga yuboriladi. Tasdiqlaysizmi?"
+BC_NO_RECIPIENTS = "📭 Hozircha hech kim botni ishga tushirmagan — yuboradigan odam yo'q."
+BC_STARTED = "📤 Yuborilmoqda… {done}/{total}"
+BC_REPORT = (
+    "✅ <b>Yuborish tugadi.</b>\n"
+    "👥 Qabul qiluvchilar: {total}\n"
+    "✅ Yetib bordi: {sent}\n"
+    "🚫 Botni bloklagan: {blocked}\n"
+    "⚠️ Xato: {failed}"
+)
+BC_CANCELLED = "❌ Xabar bekor qilindi, hech kimga yuborilmadi."
+BC_STALE = "Bu tugma eskirgan — xabar tuzish tugagan yoki bekor qilingan."
+
+
+def broadcast_part_line(index: int, kind: str, summary: str) -> str:
+    label = BC_PART_LABELS.get(kind, kind)
+    return f"{index}. {label} — «{hesc(summary)}»" if summary else f"{index}. {label}"
 
 
 # ------------------------------------------- student management (tutor / superadmin)

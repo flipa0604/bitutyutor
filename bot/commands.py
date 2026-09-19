@@ -28,6 +28,7 @@ ADMIN_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="add_tutor", description="Tyutor qo'shish"),
     BotCommand(command="edit_tutor", description="Tyutorni tahrirlash"),
     BotCommand(command="delete_tutor", description="Tyutorni o'chirish"),
+    BotCommand(command="broadcast", description="Hammaga xabar yuborish"),
 )
 TUTOR_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="tutor", description="Tyutor panel"),

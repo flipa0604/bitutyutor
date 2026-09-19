@@ -72,6 +72,13 @@ VIA_TUTOR = "t"
 VIA_ADMIN = "a"
 
 
+class BcCb(CallbackData, prefix="bc"):
+    """Broadcast composer callbacks, packed as ``bc:{action}:{value}``."""
+
+    action: str
+    value: str = ""
+
+
 class StuCb(CallbackData, prefix="stu"):
     """Student management by a tutor or superadmin, packed as ``stu:{action}:{id}:{via}``.
 
@@ -103,6 +110,7 @@ ADM_CANCEL = "cancel"
 ADM_EXCEL_ALL = "excel_all"
 ADM_EXCEL_PICK = "excel_pick"
 ADM_EXCEL_TUTOR = "excel_tutor"
+ADM_BROADCAST = "broadcast"
 
 # tutor actions
 TUT_PANEL = "panel"
@@ -140,6 +148,16 @@ EDT_RESIDENCE = "res"
 EDT_TUTOR_GROUP = "tg"
 EDT_DONE = "done"
 EDT_REREGISTER = "again"
+
+# broadcast actions
+BC_SKIP = "skip"  # optional media step: nothing to add here, go on
+BC_ADD = "add"  # ``value`` = part kind to ask for next (text / photo / video / voice)
+BC_REMOVE = "rm"  # drop the last part
+BC_PREVIEW = "preview"  # copy every part to the admin themselves
+BC_REVIEW = "review"  # back to the summary
+BC_SEND = "send"  # summary -> "send to N users?"
+BC_CONFIRM = "go"  # really send
+BC_CANCEL = "cancel"
 
 # student management actions (tutor / superadmin)
 STU_LIST = "list"  # students of a group (id = group id)
@@ -210,7 +228,8 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_ADMIN_TEST_USERS, callback_data=TestCb(action=TST_LIST))
     b.button(text=texts.BTN_ADMIN_EXCEL_ALL, callback_data=AdminCb(action=ADM_EXCEL_ALL))
     b.button(text=texts.BTN_ADMIN_EXCEL_PICK, callback_data=AdminCb(action=ADM_EXCEL_PICK))
-    b.adjust(2, 2, 1, 1)
+    b.button(text=texts.BTN_ADMIN_BROADCAST, callback_data=AdminCb(action=ADM_BROADCAST))
+    b.adjust(2, 2, 1, 1, 1)
     return b.as_markup()
 
 
@@ -493,4 +512,55 @@ def student_farewell_kb(student_id: int, via: str) -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_YES_SEND_MESSAGE, callback_data=StuCb(action=STU_BYE_YES, id=student_id, via=via))
     b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_BYE_NO, id=student_id, via=via))
     b.adjust(2)
+    return b.as_markup()
+
+
+# ----------------------------------------------------- inline: broadcast (superadmin)
+
+PART_KINDS: tuple[str, ...] = ("text", "photo", "video", "voice")
+
+
+def broadcast_skip_kb() -> InlineKeyboardMarkup:
+    """Under an optional media step: nothing to add, go to the next step."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_BC_SKIP, callback_data=BcCb(action=BC_SKIP))
+    return b.as_markup()
+
+
+def broadcast_continue_kb() -> InlineKeyboardMarkup:
+    """After something was added in a media step: more of the same is welcome, or move on."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_BC_CONTINUE, callback_data=BcCb(action=BC_SKIP))
+    return b.as_markup()
+
+
+def broadcast_review_kb(can_remove: bool) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_BC_ADD_TEXT, callback_data=BcCb(action=BC_ADD, value="text"))
+    b.button(text=texts.BTN_BC_ADD_PHOTO, callback_data=BcCb(action=BC_ADD, value="photo"))
+    b.button(text=texts.BTN_BC_ADD_VIDEO, callback_data=BcCb(action=BC_ADD, value="video"))
+    b.button(text=texts.BTN_BC_ADD_VOICE, callback_data=BcCb(action=BC_ADD, value="voice"))
+    rows = [2, 2]
+    if can_remove:
+        b.button(text=texts.BTN_BC_REMOVE_LAST, callback_data=BcCb(action=BC_REMOVE))
+        rows.append(1)
+    b.button(text=texts.BTN_BC_PREVIEW, callback_data=BcCb(action=BC_PREVIEW))
+    b.button(text=texts.BTN_BC_SEND, callback_data=BcCb(action=BC_SEND))
+    b.button(text=texts.BTN_CANCEL, callback_data=BcCb(action=BC_CANCEL))
+    b.adjust(*rows, 1, 1, 1)
+    return b.as_markup()
+
+
+def broadcast_back_kb() -> InlineKeyboardMarkup:
+    """Under an ➕ prompt: changed my mind, back to the summary."""
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_BACK, callback_data=BcCb(action=BC_REVIEW))
+    return b.as_markup()
+
+
+def broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_BC_CONFIRM, callback_data=BcCb(action=BC_CONFIRM))
+    b.button(text=texts.BTN_BACK, callback_data=BcCb(action=BC_REVIEW))
+    b.adjust(1)
     return b.as_markup()

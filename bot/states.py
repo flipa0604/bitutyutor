@@ -18,6 +18,22 @@ class AdminTestUserAdd(StatesGroup):
     telegram_id = State()
 
 
+class Broadcast(StatesGroup):
+    """A superadmin composing a message to every bot user (``bot.handlers.broadcast``).
+
+    The parts collected so far live in the FSM data as ``parts`` (see ``bot.broadcast.Part``); the
+    three media steps are optional and only guide the order, any supported content is accepted in each.
+    """
+
+    text = State()  # the mandatory opening text
+    photo = State()
+    video = State()
+    voice = State()
+    review = State()  # summary with ➕ / 👁 / 📤 buttons
+    add = State()  # one more part requested from the review screen
+    confirm = State()  # "send to N users?"
+
+
 class TutorGroupAdd(StatesGroup):
     name = State()
 

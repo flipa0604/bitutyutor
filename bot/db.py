@@ -335,6 +335,11 @@ class Database:
         )
         return [_row_to_bot_user(r) for r in rows]
 
+    async def list_user_ids(self) -> list[int]:
+        """Telegram ids of everyone who ever pressed /start -- the audience of a broadcast."""
+        rows = await self._fetchall("SELECT telegram_id FROM users ORDER BY started_at, telegram_id")
+        return [int(r["telegram_id"]) for r in rows]
+
     # -------------------------------------------------------------- test users
 
     async def add_test_user(self, telegram_id: int, name: str = "") -> bool:
