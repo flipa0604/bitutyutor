@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import (
@@ -14,7 +15,16 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from . import texts
-from .models import Group, Student, TestUser, Tutor
+from .models import (
+    COURSE_MAX,
+    COURSE_MIN,
+    REGION_VALUES,
+    SURVEY_BASIC,
+    SURVEY_FULL,
+    Group,
+    TestUser,
+    Tutor,
+)
 
 # ------------------------------------------------------------ callback data
 
@@ -79,6 +89,20 @@ class BcCb(CallbackData, prefix="bc"):
     value: str = ""
 
 
+class SurveyCb(CallbackData, prefix="sv"):
+    """Which questionnaire the student picked, packed as ``sv:{action}:{code}``."""
+
+    action: str
+    code: str
+
+
+class FullCb(CallbackData, prefix="fl"):
+    """Full-survey callbacks, packed as ``fl:{action}:{value}`` (``value`` = a field or status code)."""
+
+    action: str
+    value: str = ""
+
+
 class StuCb(CallbackData, prefix="stu"):
     """Student management by a tutor or superadmin, packed as ``stu:{action}:{id}:{via}``.
 
@@ -92,6 +116,8 @@ class StuCb(CallbackData, prefix="stu"):
     action: str
     id: int = 0
     via: str = VIA_TUTOR
+    s: str = SURVEY_BASIC
+    """Which questionnaire the screen is about; the two are listed and deleted separately."""
 
 
 # admin actions
@@ -111,6 +137,8 @@ ADM_EXCEL_ALL = "excel_all"
 ADM_EXCEL_PICK = "excel_pick"
 ADM_EXCEL_TUTOR = "excel_tutor"
 ADM_BROADCAST = "broadcast"
+ADM_EXCEL_ALL_FULL = "excel_all_f"  # full survey, every tutor
+ADM_EXCEL_TUTOR_FULL = "excel_tut_f"  # full survey, one tutor
 
 # tutor actions
 TUT_PANEL = "panel"
@@ -127,6 +155,10 @@ TUT_EXCEL_RES = "excel_res"
 TUT_EXCEL_RES_PICK = "excel_res_pick"
 TUT_EXCEL_ALL = "excel_all"
 TUT_STUDENTS = "students"  # pick a group whose students to manage
+TUT_EXCEL_FULL_PICK = "exf_pick"  # full survey: pick a group
+TUT_EXCEL_FULL_GROUP = "exf_group"
+TUT_EXCEL_FULL_ALL = "exf_all"
+TUT_PHONE = "phone"  # the tutor's own number, a column of the full survey
 
 # registration actions
 REG_TUTOR = "tutor"
@@ -149,6 +181,22 @@ EDT_TUTOR_GROUP = "tg"
 EDT_DONE = "done"
 EDT_REREGISTER = "again"
 
+# survey picker actions
+SV_FILL = "fill"  # not filled in yet: start the questionnaire
+SV_OPEN = "open"  # already filled in: show the card
+
+# full survey actions
+FL_OPEN = "open"  # show the field picker
+FL_FIELD = "field"  # edit one field, named by ``FullCb.value``
+FL_SOCIAL = "soc"  # toggle one social-status code
+FL_SOCIAL_NONE = "soc_no"
+FL_SOCIAL_DONE = "soc_ok"
+FL_CONFIRM = "confirm"
+FL_RESTART = "restart"
+FL_CANCEL = "cancel"
+FL_DONE = "done"
+FL_REFILL = "again"  # test users only: fill the whole questionnaire again
+
 # broadcast actions
 BC_SKIP = "skip"  # optional media step: nothing to add here, go on
 BC_ADD = "add"  # ``value`` = part kind to ask for next (text / photo / video / voice)
@@ -160,7 +208,8 @@ BC_CONFIRM = "go"  # really send
 BC_CANCEL = "cancel"
 
 # student management actions (tutor / superadmin)
-STU_LIST = "list"  # students of a group (id = group id)
+STU_SURVEYS = "svs"  # a group's two student lists to choose from (id = group id)
+STU_LIST = "list"  # students of a group in one survey (id = group id)
 STU_VIEW = "view"  # one student's card
 STU_MESSAGE = "msg"  # write to the student
 STU_DELETE = "del"  # ask for confirmation
@@ -228,8 +277,9 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_ADMIN_TEST_USERS, callback_data=TestCb(action=TST_LIST))
     b.button(text=texts.BTN_ADMIN_EXCEL_ALL, callback_data=AdminCb(action=ADM_EXCEL_ALL))
     b.button(text=texts.BTN_ADMIN_EXCEL_PICK, callback_data=AdminCb(action=ADM_EXCEL_PICK))
+    b.button(text=texts.BTN_ADMIN_EXCEL_FULL, callback_data=AdminCb(action=ADM_EXCEL_ALL_FULL))
     b.button(text=texts.BTN_ADMIN_BROADCAST, callback_data=AdminCb(action=ADM_BROADCAST))
-    b.adjust(2, 2, 1, 1, 1)
+    b.adjust(2, 2, 1, 1, 1, 1)
     return b.as_markup()
 
 
@@ -273,9 +323,10 @@ def admin_tutor_card_kb(tutor_id: int) -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_EDIT_TG, callback_data=AdminCb(action=ADM_EDIT_TG, tutor_id=tutor_id))
     b.button(text=texts.BTN_TUTOR_GROUP_LIST, callback_data=AdminCb(action=ADM_GROUPS, tutor_id=tutor_id))
     b.button(text=texts.BTN_EXCEL, callback_data=AdminCb(action=ADM_EXCEL_TUTOR, tutor_id=tutor_id))
+    b.button(text=texts.BTN_EXCEL_FULL, callback_data=AdminCb(action=ADM_EXCEL_TUTOR_FULL, tutor_id=tutor_id))
     b.button(text=texts.BTN_DELETE, callback_data=AdminCb(action=ADM_DELETE, tutor_id=tutor_id))
     b.button(text=texts.BTN_BACK, callback_data=AdminCb(action=ADM_LIST))
-    b.adjust(1, 1, 2, 1, 1)
+    b.adjust(1, 1, 1, 2, 1, 1)
     return b.as_markup()
 
 
@@ -285,7 +336,7 @@ def admin_group_list_kb(groups: Sequence[Group], tutor_id: int) -> InlineKeyboar
     for group in groups:
         b.button(
             text=texts.group_button_label(group.name, group.student_count),
-            callback_data=StuCb(action=STU_LIST, id=group.id, via=VIA_ADMIN),
+            callback_data=StuCb(action=STU_SURVEYS, id=group.id, via=VIA_ADMIN),
         )
     b.adjust(1)
     b.row(_back_button(texts.BTN_BACK, AdminCb(action=ADM_VIEW, tutor_id=tutor_id).pack()))
@@ -332,7 +383,8 @@ def tutor_panel_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_TUTOR_ADD_GROUP, callback_data=TutorCb(action=TUT_ADD))
     b.button(text=texts.BTN_GROUP_STUDENTS, callback_data=TutorCb(action=TUT_STUDENTS))
     b.button(text=texts.BTN_TUTOR_EXCEL, callback_data=TutorCb(action=TUT_EXCEL_MENU))
-    b.adjust(2, 1, 1)
+    b.button(text=texts.BTN_TUTOR_PHONE, callback_data=TutorCb(action=TUT_PHONE))
+    b.adjust(2, 1, 1, 1)
     return b.as_markup()
 
 
@@ -343,7 +395,7 @@ def tutor_group_list_kb(
     b = InlineKeyboardBuilder()
     for group in groups:
         if action == TUT_STUDENTS:
-            data = StuCb(action=STU_LIST, id=group.id, via=VIA_TUTOR).pack()
+            data = StuCb(action=STU_SURVEYS, id=group.id, via=VIA_TUTOR).pack()
         else:
             data = TutorCb(action=action, group_id=group.id).pack()
         b.button(text=texts.group_button_label(group.name, group.student_count), callback_data=data)
@@ -356,7 +408,7 @@ def tutor_group_list_kb(
 
 def tutor_group_card_kb(group_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text=texts.BTN_GROUP_STUDENTS, callback_data=StuCb(action=STU_LIST, id=group_id, via=VIA_TUTOR))
+    b.button(text=texts.BTN_GROUP_STUDENTS, callback_data=StuCb(action=STU_SURVEYS, id=group_id, via=VIA_TUTOR))
     b.button(text=texts.BTN_RENAME_GROUP, callback_data=TutorCb(action=TUT_RENAME, group_id=group_id))
     b.button(text=texts.BTN_DELETE, callback_data=TutorCb(action=TUT_DELETE, group_id=group_id))
     b.button(text=texts.BTN_EXCEL, callback_data=TutorCb(action=TUT_EXCEL_GROUP, group_id=group_id))
@@ -374,10 +426,13 @@ def tutor_confirm_delete_kb(group_id: int) -> InlineKeyboardMarkup:
 
 
 def tutor_excel_menu_kb() -> InlineKeyboardMarkup:
+    """Both questionnaires on one screen: the basic one first, the full one under it."""
     b = InlineKeyboardBuilder()
     b.button(text=texts.BTN_EXCEL_BY_GROUP, callback_data=TutorCb(action=TUT_EXCEL_PICK_GROUP))
     b.button(text=texts.BTN_EXCEL_BY_RESIDENCE, callback_data=TutorCb(action=TUT_EXCEL_RES))
     b.button(text=texts.BTN_EXCEL_ALL_GROUPS, callback_data=TutorCb(action=TUT_EXCEL_ALL))
+    b.button(text=texts.BTN_EXCEL_FULL_GROUP, callback_data=TutorCb(action=TUT_EXCEL_FULL_PICK))
+    b.button(text=texts.BTN_EXCEL_FULL_ALL, callback_data=TutorCb(action=TUT_EXCEL_FULL_ALL))
     b.button(text=texts.BTN_BACK, callback_data=TutorCb(action=TUT_PANEL))
     b.adjust(1)
     return b.as_markup()
@@ -478,39 +533,64 @@ def _students_back_button(group: Group, via: str) -> InlineKeyboardButton:
     return _back_button(texts.BTN_BACK, data)
 
 
-def student_list_kb(students: Sequence[Student], group: Group, via: str) -> InlineKeyboardMarkup:
+def group_surveys_kb(group: Group, via: str, basic_n: int, full_n: int) -> InlineKeyboardMarkup:
+    """Which questionnaire's students of this group to work with."""
     b = InlineKeyboardBuilder()
-    for student in students:
-        b.button(text=student.full_name, callback_data=StuCb(action=STU_VIEW, id=student.id, via=via))
+    b.button(
+        text=f"{texts.BTN_SURVEY_BASIC} — {basic_n} ta",
+        callback_data=StuCb(action=STU_LIST, id=group.id, via=via, s=SURVEY_BASIC),
+    )
+    b.button(
+        text=f"{texts.BTN_SURVEY_FULL} — {full_n} ta",
+        callback_data=StuCb(action=STU_LIST, id=group.id, via=via, s=SURVEY_FULL),
+    )
     b.adjust(1)
     b.row(_students_back_button(group, via))
     return b.as_markup()
 
 
-def student_manage_kb(student: Student, via: str) -> InlineKeyboardMarkup:
+def student_list_kb(rows: Sequence[Any], group: Group, via: str, survey: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for row in rows:
+        b.button(text=row.full_name, callback_data=StuCb(action=STU_VIEW, id=row.id, via=via, s=survey))
+    b.adjust(1)
+    b.row(
+        InlineKeyboardButton(
+            text=texts.BTN_BACK, callback_data=StuCb(action=STU_SURVEYS, id=group.id, via=via).pack()
+        )
+    )
+    return b.as_markup()
+
+
+def student_manage_kb(row: Any, via: str, survey: str) -> InlineKeyboardMarkup:
     """Under a student's card: write to them, delete them, or back to their group's list."""
     b = InlineKeyboardBuilder()
-    b.button(text=texts.BTN_SEND_MESSAGE, callback_data=StuCb(action=STU_MESSAGE, id=student.id, via=via))
-    b.button(text=texts.BTN_DELETE, callback_data=StuCb(action=STU_DELETE, id=student.id, via=via))
-    b.button(text=texts.BTN_BACK, callback_data=StuCb(action=STU_LIST, id=student.group_id, via=via))
+    b.button(text=texts.BTN_SEND_MESSAGE, callback_data=StuCb(action=STU_MESSAGE, id=row.id, via=via, s=survey))
+    b.button(text=texts.BTN_DELETE, callback_data=StuCb(action=STU_DELETE, id=row.id, via=via, s=survey))
+    b.button(
+        text=texts.BTN_BACK, callback_data=StuCb(action=STU_LIST, id=row.group_id, via=via, s=survey)
+    )
     b.adjust(2, 1)
     return b.as_markup()
 
 
-def student_confirm_delete_kb(student: Student, via: str) -> InlineKeyboardMarkup:
+def student_confirm_delete_kb(row: Any, via: str, survey: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text=texts.BTN_YES_DELETE, callback_data=StuCb(action=STU_CONFIRM_DELETE, id=student.id, via=via))
-    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_VIEW, id=student.id, via=via))
+    b.button(
+        text=texts.BTN_YES_DELETE,
+        callback_data=StuCb(action=STU_CONFIRM_DELETE, id=row.id, via=via, s=survey),
+    )
+    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_VIEW, id=row.id, via=via, s=survey))
     b.adjust(2)
     return b.as_markup()
 
 
-def student_farewell_kb(student_id: int, via: str) -> InlineKeyboardMarkup:
+def student_farewell_kb(row_id: int, via: str, survey: str) -> InlineKeyboardMarkup:
     """"Message the deleted student?" -- carries the deleted row's id so a button left over from an
     earlier deletion can be told apart from the current question."""
     b = InlineKeyboardBuilder()
-    b.button(text=texts.BTN_YES_SEND_MESSAGE, callback_data=StuCb(action=STU_BYE_YES, id=student_id, via=via))
-    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_BYE_NO, id=student_id, via=via))
+    b.button(text=texts.BTN_YES_SEND_MESSAGE, callback_data=StuCb(action=STU_BYE_YES, id=row_id, via=via, s=survey))
+    b.button(text=texts.BTN_NO, callback_data=StuCb(action=STU_BYE_NO, id=row_id, via=via, s=survey))
     b.adjust(2)
     return b.as_markup()
 
@@ -562,5 +642,142 @@ def broadcast_confirm_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=texts.BTN_BC_CONFIRM, callback_data=BcCb(action=BC_CONFIRM))
     b.button(text=texts.BTN_BACK, callback_data=BcCb(action=BC_REVIEW))
+    b.adjust(1)
+    return b.as_markup()
+
+# --------------------------------------------- survey picker (student's entry)
+
+
+def survey_pick_kb(filled: dict[str, str | None]) -> InlineKeyboardMarkup:
+    """One button per questionnaire: fill it in, or open the card that is already saved."""
+    b = InlineKeyboardBuilder()
+    for code, label in texts.SURVEY_LABELS.items():
+        done = bool(filled.get(code))
+        action = SV_OPEN if done else SV_FILL
+        prefix = "✅ " if done else "🕗 "
+        b.button(text=f"{prefix}{label}", callback_data=SurveyCb(action=action, code=code))
+    b.adjust(1)
+    return b.as_markup()
+
+
+# --------------------------------------- full survey: bottom (reply) keyboards
+
+
+def _nav_row(with_back: bool = True) -> list[KeyboardButton]:
+    row = [KeyboardButton(text=texts.BTN_CANCEL)]
+    if with_back:
+        row.insert(0, KeyboardButton(text=texts.BTN_BACK))
+    return row
+
+
+def full_nav_kb(*rows: Sequence[str], with_back: bool = True) -> ReplyKeyboardMarkup:
+    """Choice buttons (if any) above the ⬅️ Orqaga / ❌ Bekor qilish row, always at the bottom."""
+    keyboard = [[KeyboardButton(text=label) for label in row] for row in rows]
+    keyboard.append(_nav_row(with_back))
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def full_phone_kb(with_back: bool = True) -> ReplyKeyboardMarkup:
+    """The contact button is the only way to answer the phone step of the full survey."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=texts.BTN_SEND_CONTACT, request_contact=True)], _nav_row(with_back)],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def full_course_kb() -> ReplyKeyboardMarkup:
+    labels = [texts.course_label(c) for c in range(COURSE_MIN, COURSE_MAX + 1)]
+    return full_nav_kb(labels[:3], labels[3:])
+
+
+def full_citizenship_kb() -> ReplyKeyboardMarkup:
+    return full_nav_kb([texts.BTN_CITIZEN_UZ, texts.BTN_CITIZEN_OTHER])
+
+
+def full_region_kb() -> ReplyKeyboardMarkup:
+    rows = [REGION_VALUES[i : i + 2] for i in range(0, len(REGION_VALUES), 2)]
+    return full_nav_kb(*rows)
+
+
+def full_employed_kb() -> ReplyKeyboardMarkup:
+    return full_nav_kb([texts.BTN_EMPLOYED_YES, texts.BTN_EMPLOYED_NO])
+
+
+def full_married_kb() -> ReplyKeyboardMarkup:
+    return full_nav_kb([texts.BTN_MARRIED_YES, texts.BTN_MARRIED_NO])
+
+
+def full_parent_kb() -> ReplyKeyboardMarkup:
+    """Text step that may legitimately have no answer (an orphan's parent fields)."""
+    return full_nav_kb([texts.BTN_FULL_SKIP_PARENT])
+
+
+# ------------------------------------------- full survey: inline keyboards
+
+
+def full_social_kb(selected: Sequence[str]) -> InlineKeyboardMarkup:
+    """Multi-select: every status toggles, 🚫 clears them all, ✅ finishes the step."""
+    b = InlineKeyboardBuilder()
+    for code, label in texts.SOCIAL_LABELS.items():
+        mark = "✅" if code in selected else "▫️"
+        b.button(text=f"{mark} {label}", callback_data=FullCb(action=FL_SOCIAL, value=code))
+    b.adjust(1)
+    b.row(InlineKeyboardButton(text=texts.BTN_SOCIAL_NONE, callback_data=FullCb(action=FL_SOCIAL_NONE).pack()))
+    b.row(InlineKeyboardButton(text=texts.BTN_SOCIAL_DONE, callback_data=FullCb(action=FL_SOCIAL_DONE).pack()))
+    return b.as_markup()
+
+
+def full_home_kb(can_refill: bool = False) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_EDIT_FULL_DATA, callback_data=FullCb(action=FL_OPEN))
+    if can_refill:
+        b.button(text=texts.BTN_REREGISTER, callback_data=FullCb(action=FL_REFILL))
+    b.adjust(1)
+    return b.as_markup()
+
+
+FULL_EDIT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("tg", "👨‍🏫 Tyutor / guruh"),
+    ("full_name", "👤 F.I.SH"),
+    ("phone", "📞 Telefon"),
+    ("direction", "🎓 Yo'nalish"),
+    ("course", "📚 Kurs"),
+    ("birth_date", "🎂 Tug'ilgan sana"),
+    ("passport", "🪪 Pasport"),
+    ("pinfl", "🔢 JShShR"),
+    ("citizenship", "🌐 Fuqarolik"),
+    ("region", "📍 Viloyat"),
+    ("district", "🏙 Shahar/tuman"),
+    ("mfy", "🏘 MFY"),
+    ("mfy_contact", "📞 MFY raqami"),
+    ("street", "🏠 Ko'cha, uy"),
+    ("employed", "💼 Ish bilan bandlik"),
+    ("married", "💍 Oila"),
+    ("social", "🧾 Ijtimoiy holat"),
+    ("father_name", "👨 Otasi"),
+    ("father_phone", "📞 Otasining tel"),
+    ("father_work", "🏢 Otasining ishi"),
+    ("mother_name", "👩 Onasi"),
+    ("mother_phone", "📞 Onasining tel"),
+    ("mother_work", "🏢 Onasining ishi"),
+)
+"""Everything a student may change in their full survey, as ``(field, button label)``."""
+
+
+def full_edit_field_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for field, label in FULL_EDIT_FIELDS:
+        b.button(text=label, callback_data=FullCb(action=FL_FIELD, value=field))
+    b.adjust(1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2)
+    b.row(InlineKeyboardButton(text=texts.BTN_EDIT_DONE, callback_data=FullCb(action=FL_DONE).pack()))
+    return b.as_markup()
+
+
+def full_confirm_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=texts.BTN_CONFIRM, callback_data=FullCb(action=FL_CONFIRM))
+    b.button(text=texts.BTN_RESTART, callback_data=FullCb(action=FL_RESTART))
+    b.button(text=texts.BTN_CANCEL, callback_data=FullCb(action=FL_CANCEL))
     b.adjust(1)
     return b.as_markup()

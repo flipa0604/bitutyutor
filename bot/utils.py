@@ -76,6 +76,55 @@ def parse_telegram_id(text: str | None) -> int | None:
     return number if 0 < number <= MAX_TELEGRAM_ID else None
 
 
+_PASSPORT_RE = re.compile(r"^[A-Z]{2}\d{7}$")
+_CYRILLIC_LOOKALIKES = str.maketrans("АВСЕКМНОРТХУІ", "ABCEKMHOPTXYI")
+"""Uzbek passport series are printed in Latin, but phone keyboards happily produce the Cyrillic
+letters that look the same; they mean the same series, so they are folded before checking."""
+
+PINFL_LEN = 14
+_BIRTH_DATE_RE = re.compile(r"^(\d{1,2})[.\-/ ](\d{1,2})[.\-/ ](\d{4})$")
+STUDENT_MIN_AGE, STUDENT_MAX_AGE = 15, 70
+
+
+def normalize_passport(text: str | None) -> str | None:
+    """``AA1234567`` from what the student typed (spaces, lowercase, Cyrillic lookalikes), else ``None``."""
+    value = re.sub(r"[\s\-]", "", (text or "")).upper().translate(_CYRILLIC_LOOKALIKES)
+    return value if _PASSPORT_RE.fullmatch(value) else None
+
+
+def parse_birth_date(text: str | None) -> date | None:
+    """Parse ``DD.MM.YYYY`` (also ``/``, ``-`` or a space) and accept only a plausible student age."""
+    match = _BIRTH_DATE_RE.fullmatch(clean_text(text))
+    if match is None:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        value = date(year, month, day)
+    except ValueError:  # 31.02.2004 and friends
+        return None
+    today = date.today()
+    if value > today:
+        return None
+    age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+    return value if STUDENT_MIN_AGE <= age <= STUDENT_MAX_AGE else None
+
+
+def normalize_pinfl(text: str | None, birth: date) -> str | None:
+    """Check a JShShR (PNFL) against the birth date the student already gave; ``None`` when it lies.
+
+    The first digit encodes century and sex (3/4 = 1900s male/female, 5/6 = 2000s), digits 2..7 are
+    the birth date as ``DDMMYY``. A number invented on the spot practically never lines up with both,
+    which is what makes this worth checking.
+    """
+    value = re.sub(r"\s", "", text or "")
+    if not value.isdigit() or len(value) != PINFL_LEN:
+        return None
+    century = {"3": 19, "4": 19, "5": 20, "6": 20}.get(value[0])
+    if century is None or century != birth.year // 100:
+        return None
+    return value if value[1:7] == birth.strftime("%d%m%y") else None
+
+
 def safe_filename_part(name: str, max_len: int = 40) -> str:
     """Reduce an arbitrary string to filename-safe characters (unicode letters, digits, ``_``, ``-``)."""
     cleaned = _UNSAFE_FILENAME_RE.sub("_", name).strip("_")

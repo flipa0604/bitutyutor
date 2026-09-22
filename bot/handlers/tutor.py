@@ -13,13 +13,22 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup
 from .. import texts
 from ..config import Settings
 from ..db import Database, DuplicateError
-from ..excel import build_group_workbook, build_residence_workbook, build_tutor_workbook
+from ..excel import (
+    build_full_group_workbook,
+    build_full_tutor_workbook,
+    build_group_workbook,
+    build_residence_workbook,
+    build_tutor_workbook,
+)
 from ..filters import IsFreeText, IsTutor, get_roles
 from ..keyboards import (
     TUT_ADD,
     TUT_CONFIRM_DELETE,
     TUT_DELETE,
     TUT_EXCEL_ALL,
+    TUT_EXCEL_FULL_ALL,
+    TUT_EXCEL_FULL_GROUP,
+    TUT_EXCEL_FULL_PICK,
     TUT_EXCEL_GROUP,
     TUT_EXCEL_MENU,
     TUT_EXCEL_PICK_GROUP,
@@ -27,12 +36,14 @@ from ..keyboards import (
     TUT_EXCEL_RES_PICK,
     TUT_GROUPS,
     TUT_PANEL,
+    TUT_PHONE,
     TUT_RENAME,
     TUT_STUDENTS,
     TUT_VIEW,
     TutorCb,
     cancel_kb,
     main_menu_kb,
+    phone_kb,
     tutor_confirm_delete_kb,
     tutor_excel_menu_kb,
     tutor_group_card_kb,
@@ -41,8 +52,8 @@ from ..keyboards import (
     tutor_residence_kb,
 )
 from ..models import RESIDENCE_VALUES, Group, Tutor
-from ..states import TutorGroupAdd, TutorGroupEdit
-from ..utils import clean_text, edit_or_send, hesc, safe_filename_part, today_str
+from ..states import TutorGroupAdd, TutorGroupEdit, TutorPhone
+from ..utils import clean_text, edit_or_send, hesc, normalize_phone, safe_filename_part, today_str
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +64,9 @@ GROUP_NAME_MAX_LEN = 64
 
 
 def _panel_text(tutor: Tutor) -> str:
-    return texts.TUTOR_PANEL.format(name=hesc(tutor.name))
+    """The panel; a tutor without a phone number is reminded, it is a column of the full survey."""
+    text = texts.TUTOR_PANEL.format(name=hesc(tutor.name))
+    return text if tutor.phone else f"{text}\n\n{texts.TUTOR_PHONE_MISSING}"
 
 
 def _group_card(group: Group) -> str:
@@ -353,6 +366,94 @@ async def cb_excel_all(callback: CallbackQuery, db: Database, tutor: Tutor, bot:
     await send_tutor_workbook(bot, callback.from_user.id, db, tutor)
 
 
+async def send_full_tutor_workbook(bot: Bot, chat_id: int, db: Database, tutor: Tutor) -> bool:
+    """Send the tutor's full-survey workbook (``Barchasi`` + one sheet per group)."""
+    profiles = await db.list_full_profiles(tutor_id=tutor.id)
+    if not profiles:
+        await bot.send_message(chat_id, texts.NO_DATA)
+        return False
+    groups = await db.list_groups(tutor.id)
+    data = await asyncio.to_thread(build_full_tutor_workbook, groups, profiles)
+    await _send_document(
+        bot, chat_id, data, _filename(tutor, "toliq_anketa"), f"{tutor.name} — to'liq anketa", len(profiles)
+    )
+    return True
+
+
+async def cb_excel_full_pick(callback: CallbackQuery, db: Database, tutor: Tutor, bot: Bot) -> None:
+    await callback.answer()
+    text, kb = await _group_list(
+        db, tutor, action=TUT_EXCEL_FULL_GROUP, title=texts.EXCEL_FULL_PICK_GROUP, back_action=TUT_EXCEL_MENU
+    )
+    await edit_or_send(callback, bot, text, kb)
+
+
+async def cb_excel_full_group(
+    callback: CallbackQuery, callback_data: TutorCb, db: Database, tutor: Tutor, bot: Bot
+) -> None:
+    group = await _own_group(callback, db, tutor, callback_data.group_id)
+    if group is None:
+        return
+    await callback.answer()
+    profiles = await db.list_full_profiles(tutor_id=tutor.id, group_id=group.id)
+    if not profiles:
+        await bot.send_message(callback.from_user.id, texts.NO_DATA)
+        return
+    data = await asyncio.to_thread(build_full_group_workbook, group, profiles)
+    await _send_document(
+        bot,
+        callback.from_user.id,
+        data,
+        _filename(tutor, f"{group.name}_toliq"),
+        f"{group.name} — to'liq anketa",
+        len(profiles),
+    )
+
+
+async def cb_excel_full_all(callback: CallbackQuery, db: Database, tutor: Tutor, bot: Bot) -> None:
+    await callback.answer()
+    await send_full_tutor_workbook(bot, callback.from_user.id, db, tutor)
+
+
+# ------------------------------------------------------------ tutor's phone
+
+
+async def _phone_prompt(tutor: Tutor) -> str:
+    return texts.TUTOR_PHONE_CURRENT.format(phone=hesc(tutor.phone)) if tutor.phone else texts.TUTOR_ASK_PHONE
+
+
+async def cb_phone(callback: CallbackQuery, state: FSMContext, tutor: Tutor, bot: Bot) -> None:
+    await state.clear()
+    await state.set_state(TutorPhone.phone)
+    await callback.answer()
+    await bot.send_message(callback.from_user.id, await _phone_prompt(tutor), reply_markup=phone_kb())
+
+
+async def cmd_phone(message: Message, state: FSMContext, tutor: Tutor) -> None:
+    await state.clear()
+    await state.set_state(TutorPhone.phone)
+    await message.answer(await _phone_prompt(tutor), reply_markup=phone_kb())
+
+
+async def save_phone(
+    message: Message, state: FSMContext, db: Database, settings: Settings, tutor: Tutor, bot: Bot
+) -> None:
+    """The tutor's own number: shared as a contact or typed as ``+998XXXXXXXXX``."""
+    raw = message.contact.phone_number if message.contact is not None else message.text
+    phone = normalize_phone(raw)
+    if phone is None:
+        await message.answer(texts.REG_PHONE_INVALID, reply_markup=phone_kb())
+        return
+    await db.update_tutor_phone(tutor.id, phone)
+    await state.clear()
+    log.info("Tutor %s set their phone number", tutor.id)
+    is_admin, is_tutor = await get_roles(db, settings, message.chat.id)
+    await message.answer(
+        texts.TUTOR_PHONE_SAVED.format(phone=hesc(phone)), reply_markup=main_menu_kb(is_admin, is_tutor)
+    )
+    await message.answer(_panel_text(tutor), reply_markup=tutor_panel_kb())
+
+
 # ------------------------------------------------------------- registration
 
 
@@ -374,6 +475,7 @@ def create_router() -> Router:
     msg.register(cmd_delete_group, Command("delete_group"))
     msg.register(cmd_excel, Command("excel"))
     msg.register(cmd_students, Command("students"))
+    msg.register(cmd_phone, Command("phone"))
 
     cb.register(cb_panel, TutorCb.filter(F.action == TUT_PANEL))
     cb.register(cb_groups, TutorCb.filter(F.action == TUT_GROUPS))
@@ -397,4 +499,11 @@ def create_router() -> Router:
     cb.register(cb_excel_residence, TutorCb.filter(F.action == TUT_EXCEL_RES))
     cb.register(cb_excel_residence_pick, TutorCb.filter(F.action == TUT_EXCEL_RES_PICK))
     cb.register(cb_excel_all, TutorCb.filter(F.action == TUT_EXCEL_ALL))
+    cb.register(cb_excel_full_pick, TutorCb.filter(F.action == TUT_EXCEL_FULL_PICK))
+    cb.register(cb_excel_full_group, TutorCb.filter(F.action == TUT_EXCEL_FULL_GROUP))
+    cb.register(cb_excel_full_all, TutorCb.filter(F.action == TUT_EXCEL_FULL_ALL))
+
+    cb.register(cb_phone, TutorCb.filter(F.action == TUT_PHONE))
+    msg.register(save_phone, TutorPhone.phone, F.contact)
+    msg.register(save_phone, TutorPhone.phone, free_text)
     return router

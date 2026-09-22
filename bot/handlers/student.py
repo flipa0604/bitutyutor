@@ -30,8 +30,11 @@ from ..keyboards import (
     REG_GROUP,
     REG_RESTART,
     REG_TUTOR,
+    SV_FILL,
+    SV_OPEN,
     EditCb,
     RegCb,
+    SurveyCb,
     cancel_kb,
     main_menu_kb,
     phone_kb,
@@ -39,11 +42,13 @@ from ..keyboards import (
     reg_group_list_kb,
     reg_tutor_list_kb,
     residence_kb,
+    survey_pick_kb,
     student_edit_field_kb,
     student_home_kb,
 )
-from ..models import RESIDENCE_VALUES, Group, Student, Tutor
+from ..models import RESIDENCE_VALUES, SURVEY_BASIC, SURVEY_FULL, Group, Student, Tutor
 from ..states import Registration, StudentEdit
+from . import full
 from ..utils import (
     clean_text,
     edit_or_send,
@@ -162,10 +167,63 @@ async def _show_preview(message: Message, state: FSMContext, db: Database, bot: 
 # ------------------------------------------------------------- entry points
 
 
-async def register_button(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
-    if message.from_user is not None and await show_student_home(bot, message.from_user.id, state, db):
+async def show_survey_picker(bot: Bot, user_id: int, state: FSMContext, db: Database, *, for_edit: bool = False) -> None:
+    """Ask which questionnaire the student means: the two are independent of each other."""
+    await state.clear()
+    basic = await db.get_student_by_telegram_id(user_id)
+    profile = await db.get_full_profile_by_telegram_id(user_id)
+    filled = {
+        SURVEY_BASIC: basic.created_at if basic is not None else None,
+        SURVEY_FULL: profile.created_at if profile is not None else None,
+    }
+    title = texts.SURVEY_PICK_EDIT if for_edit else texts.SURVEY_PICK
+    await bot.send_message(
+        user_id,
+        title.format(lines=texts.survey_lines(filled)),
+        reply_markup=survey_pick_kb(filled),
+    )
+
+
+async def cb_survey_fill(
+    callback: CallbackQuery, callback_data: SurveyCb, state: FSMContext, db: Database, bot: Bot
+) -> None:
+    """🕗 button: start the questionnaire, unless it turns out to be filled in after all."""
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    user = callback.from_user
+    if callback_data.code == SURVEY_FULL:
+        if await full.show_full_home(bot, user.id, state, db):
+            return
+        await full.start_full_survey(bot, user.id, state, db, user.id, user.username)
         return
-    await start_registration(bot, message.chat.id, state, db)
+    if await show_student_home(bot, user.id, state, db):
+        return
+    await start_registration(bot, user.id, state, db)
+
+
+async def cb_survey_open(
+    callback: CallbackQuery, callback_data: SurveyCb, state: FSMContext, db: Database, bot: Bot
+) -> None:
+    """✅ button: show the saved card of that questionnaire (or start it when it is gone)."""
+    await callback.answer()
+    await remove_inline_keyboard(callback)
+    user = callback.from_user
+    if callback_data.code == SURVEY_FULL:
+        if await full.show_full_home(bot, user.id, state, db):
+            return
+        await bot.send_message(user.id, texts.SURVEY_NOT_FILLED.format(label=texts.survey_label(SURVEY_FULL)))
+        await full.start_full_survey(bot, user.id, state, db, user.id, user.username)
+        return
+    if await show_student_home(bot, user.id, state, db):
+        return
+    await bot.send_message(user.id, texts.SURVEY_NOT_FILLED.format(label=texts.survey_label(SURVEY_BASIC)))
+    await start_registration(bot, user.id, state, db)
+
+
+async def register_button(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
+    if message.from_user is None:
+        return
+    await show_survey_picker(bot, message.from_user.id, state, db)
 
 
 async def reg_cancel(callback: CallbackQuery, state: FSMContext, db: Database, settings: Settings, bot: Bot) -> None:
@@ -498,10 +556,7 @@ async def _apply_edit(
 async def cmd_mydata(message: Message, state: FSMContext, db: Database, bot: Bot) -> None:
     if message.from_user is None:
         return
-    if await show_student_home(bot, message.from_user.id, state, db):
-        return
-    await message.answer(texts.STUDENT_NOT_REGISTERED, reply_markup=ReplyKeyboardRemove())
-    await start_registration(bot, message.chat.id, state, db)
+    await show_survey_picker(bot, message.from_user.id, state, db, for_edit=True)
 
 
 async def edit_open(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot) -> None:
@@ -705,6 +760,8 @@ def create_router() -> Router:
 
     msg.register(register_button, F.text == texts.BTN_REGISTER)
     msg.register(cmd_mydata, Command("mydata"))
+    cb.register(cb_survey_fill, SurveyCb.filter(F.action == SV_FILL))
+    cb.register(cb_survey_open, SurveyCb.filter(F.action == SV_OPEN))
     cb.register(reg_cancel, RegCb.filter(F.action == REG_CANCEL))
     cb.register(reg_restart, StateFilter(Registration), RegCb.filter(F.action == REG_RESTART))
 

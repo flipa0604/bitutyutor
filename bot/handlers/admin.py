@@ -20,7 +20,7 @@ from .. import texts
 from ..commands import refresh_user_commands
 from ..config import Settings
 from ..db import Database, DuplicateError
-from ..excel import build_all_tutors_workbook
+from ..excel import build_all_tutors_workbook, build_full_all_tutors_workbook
 from ..filters import IsFreeText, IsSuperAdmin, get_roles
 from ..keyboards import (
     ADM_ADD,
@@ -31,8 +31,10 @@ from ..keyboards import (
     ADM_EDIT_PICK,
     ADM_EDIT_TG,
     ADM_EXCEL_ALL,
+    ADM_EXCEL_ALL_FULL,
     ADM_EXCEL_PICK,
     ADM_EXCEL_TUTOR,
+    ADM_EXCEL_TUTOR_FULL,
     ADM_GROUPS,
     ADM_LIST,
     ADM_PANEL,
@@ -60,7 +62,7 @@ from ..keyboards import (
 from ..models import Tutor
 from ..states import AdminTestUserAdd, AdminTutorAdd, AdminTutorEdit
 from ..utils import clean_text, edit_or_send, hesc, parse_telegram_id, remove_inline_keyboard, today_str
-from .tutor import send_tutor_workbook
+from .tutor import send_full_tutor_workbook, send_tutor_workbook
 
 log = logging.getLogger(__name__)
 
@@ -506,6 +508,30 @@ async def cb_excel_tutor(callback: CallbackQuery, callback_data: AdminCb, db: Da
     await send_tutor_workbook(bot, callback.from_user.id, db, tutor)
 
 
+async def cb_excel_all_full(callback: CallbackQuery, db: Database, bot: Bot) -> None:
+    """The full survey of every tutor: ``Barchasi`` plus one sheet per tutor."""
+    await callback.answer()
+    profiles = await db.list_full_profiles()
+    if not profiles:
+        await bot.send_message(callback.from_user.id, texts.NO_DATA)
+        return
+    tutors = await db.list_tutors()
+    data = await asyncio.to_thread(build_full_all_tutors_workbook, tutors, profiles)
+    await bot.send_document(
+        callback.from_user.id,
+        BufferedInputFile(data, filename=f"toliq_anketa_{today_str()}.xlsx"),
+        caption=texts.EXCEL_CAPTION.format(title="To'liq anketa — barcha tyutorlar", count=len(profiles)),
+    )
+
+
+async def cb_excel_tutor_full(callback: CallbackQuery, callback_data: AdminCb, db: Database, bot: Bot) -> None:
+    tutor = await _load_tutor(callback, db, callback_data.tutor_id)
+    if tutor is None:
+        return
+    await callback.answer()
+    await send_full_tutor_workbook(bot, callback.from_user.id, db, tutor)
+
+
 # ------------------------------------------------------------- registration
 
 
@@ -558,4 +584,6 @@ def create_router() -> Router:
     cb.register(cb_excel_all, AdminCb.filter(F.action == ADM_EXCEL_ALL))
     cb.register(cb_excel_pick, AdminCb.filter(F.action == ADM_EXCEL_PICK))
     cb.register(cb_excel_tutor, AdminCb.filter(F.action == ADM_EXCEL_TUTOR))
+    cb.register(cb_excel_all_full, AdminCb.filter(F.action == ADM_EXCEL_ALL_FULL))
+    cb.register(cb_excel_tutor_full, AdminCb.filter(F.action == ADM_EXCEL_TUTOR_FULL))
     return router

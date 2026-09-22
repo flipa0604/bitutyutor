@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from .models import RESIDENCE_VALUES, BotUser, Group, Student, TestUser, Tutor
+from .models import RESIDENCE_VALUES, BotUser, FullProfile, Group, Student, TestUser, Tutor
 
 _RESIDENCE_CHECK = "CHECK (residence IN ({}))".format(",".join(f"'{v}'" for v in RESIDENCE_VALUES))
 """The ``students.residence`` constraint, spelled from :data:`RESIDENCE_VALUES`. SQLite cannot
@@ -68,6 +68,49 @@ CREATE TABLE IF NOT EXISTS groups (
   UNIQUE(tutor_id, name)
 );
 CREATE TABLE IF NOT EXISTS students ({_STUDENTS_COLUMNS});
+CREATE TABLE IF NOT EXISTS full_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_id INTEGER NOT NULL UNIQUE,
+  username TEXT,
+  tutor_id INTEGER NOT NULL REFERENCES tutors(id) ON DELETE CASCADE,
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  course INTEGER NOT NULL,
+  passport TEXT NOT NULL,
+  pinfl TEXT NOT NULL,
+  birth_date TEXT NOT NULL,
+  citizenship TEXT NOT NULL,
+  region TEXT NOT NULL,
+  district TEXT NOT NULL,
+  mfy TEXT NOT NULL,
+  mfy_contact TEXT NOT NULL,
+  street TEXT NOT NULL,
+  employed INTEGER NOT NULL DEFAULT 0,
+  work_place TEXT NOT NULL DEFAULT '',
+  work_position TEXT NOT NULL DEFAULT '',
+  work_address TEXT NOT NULL DEFAULT '',
+  work_phone TEXT NOT NULL DEFAULT '',
+  married INTEGER NOT NULL DEFAULT 0,
+  spouse_name TEXT NOT NULL DEFAULT '',
+  spouse_work TEXT NOT NULL DEFAULT '',
+  spouse_phone TEXT NOT NULL DEFAULT '',
+  social_status TEXT NOT NULL DEFAULT '',
+  father_name TEXT NOT NULL,
+  father_phone TEXT NOT NULL,
+  father_work TEXT NOT NULL,
+  mother_name TEXT NOT NULL,
+  mother_phone TEXT NOT NULL,
+  mother_work TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  edited_at TEXT
+);
+-- One passport and one PNFL can belong to one person only: the cheapest guard against a student
+-- filling the survey twice under made-up identities.
+CREATE UNIQUE INDEX IF NOT EXISTS full_profiles_passport ON full_profiles(passport);
+CREATE UNIQUE INDEX IF NOT EXISTS full_profiles_pinfl ON full_profiles(pinfl);
 """
 
 # The documented way to change a constraint in SQLite: build the table afresh, copy the rows over
@@ -104,8 +147,16 @@ SELECT g.*, (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) AS student
 FROM groups g
 """
 
+_FULL_SELECT = """
+SELECT f.*, t.name AS tutor_name, t.phone AS tutor_phone, g.name AS group_name
+FROM full_profiles f
+JOIN tutors t ON t.id = f.tutor_id
+JOIN groups g ON g.id = f.group_id
+"""
+
 _USER_SELECT = """
-SELECT u.*, EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id) AS is_student
+SELECT u.*, (EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)
+             OR EXISTS(SELECT 1 FROM full_profiles f WHERE f.telegram_id = u.telegram_id)) AS is_student
 FROM users u
 """
 
@@ -147,7 +198,13 @@ class DuplicateError(sqlite3.IntegrityError):
 
 
 def _row_to_tutor(row: aiosqlite.Row) -> Tutor:
-    return Tutor(id=row["id"], name=row["name"], telegram_id=row["telegram_id"], created_at=row["created_at"])
+    return Tutor(
+        id=row["id"],
+        name=row["name"],
+        telegram_id=row["telegram_id"],
+        created_at=row["created_at"],
+        phone=row["phone"] or "",
+    )
 
 
 async def _existing_columns(conn: aiosqlite.Connection, table: str) -> set[str]:
@@ -216,6 +273,37 @@ def _row_to_student(row: aiosqlite.Row) -> Student:
     )
 
 
+_FULL_COLUMNS: tuple[str, ...] = (
+    "telegram_id", "username", "tutor_id", "group_id", "full_name", "phone", "direction", "course",
+    "passport", "pinfl", "birth_date", "citizenship", "region", "district", "mfy", "mfy_contact",
+    "street", "employed", "work_place", "work_position", "work_address", "work_phone", "married",
+    "spouse_name", "spouse_work", "spouse_phone", "social_status", "father_name", "father_phone",
+    "father_work", "mother_name", "mother_phone", "mother_work",
+)
+"""Every writable column of ``full_profiles``, in insert order."""
+
+FULL_EDITABLE_FIELDS: frozenset[str] = frozenset(set(_FULL_COLUMNS) - {"telegram_id"})
+"""Columns :meth:`Database.update_full_profile` may write; only names from this set are ever
+interpolated into an UPDATE statement, the values stay bound parameters."""
+
+
+def _row_to_full(row: aiosqlite.Row) -> FullProfile:
+    values: dict[str, Any] = {name: row[name] for name in _FULL_COLUMNS}
+    values["employed"] = bool(values["employed"])
+    values["married"] = bool(values["married"])
+    values["course"] = int(values["course"])
+    return FullProfile(
+        id=row["id"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        edited_at=row["edited_at"],
+        tutor_name=row["tutor_name"],
+        tutor_phone=row["tutor_phone"] or "",
+        group_name=row["group_name"],
+        **values,
+    )
+
+
 class Database:
     """Async wrapper around a single aiosqlite connection.
 
@@ -253,6 +341,9 @@ class Database:
         # added after the first release have to be brought in explicitly.
         if "edited_at" not in await _existing_columns(conn, "students"):
             await conn.execute("ALTER TABLE students ADD COLUMN edited_at TEXT")
+        # The tutor's own phone number, a column of the full survey, arrived with it.
+        if "phone" not in await _existing_columns(conn, "tutors"):
+            await conn.execute("ALTER TABLE tutors ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
         # A residence code added after the table was created is rejected by the stored CHECK
         # constraint until the table is rebuilt with the current one (after the column above, which
         # the copy needs). ``executescript`` commits whatever is pending first, so the pragma works.
@@ -321,7 +412,8 @@ class Database:
         """``(total, registered)``: how many people started the bot, and how many are students."""
         row = await self._fetchone(
             "SELECT COUNT(*) AS total,"
-            " SUM(EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)) AS registered"
+            " SUM(EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)"
+            "     OR EXISTS(SELECT 1 FROM full_profiles f WHERE f.telegram_id = u.telegram_id)) AS registered"
             " FROM users u"
         )
         if row is None:
@@ -551,6 +643,120 @@ class Database:
         cur = await self._write(
             "DELETE FROM students WHERE id = ? AND (? IS NULL OR tutor_id = ?)", (student_id, tutor_id, tutor_id)
         )
+        return cur.rowcount > 0
+
+    # ----------------------------------------------------------- full survey
+
+    async def upsert_full_profile(self, *, telegram_id: int, **fields: Any) -> tuple[FullProfile, bool]:
+        """Insert or replace the full-survey row of ``telegram_id``; returns ``(profile, is_update)``.
+
+        A passport or PNFL already used by *another* student raises :class:`DuplicateError`, so one
+        person cannot be entered twice under made-up identities.
+        """
+        unknown = sorted(set(fields) - set(_FULL_COLUMNS))
+        if unknown:
+            raise ValueError(f"Not a full-profile field: {', '.join(unknown)}")
+        missing = sorted(set(_FULL_COLUMNS) - {"telegram_id"} - set(fields))
+        if missing:
+            raise ValueError(f"Missing full-profile fields: {', '.join(missing)}")
+        group = await self.get_group(int(fields["group_id"]))
+        if group is None or group.tutor_id != int(fields["tutor_id"]):
+            raise ValueError("Group does not exist or does not belong to the tutor")
+        values: dict[str, Any] = {"telegram_id": telegram_id, **fields}
+        values["employed"] = int(bool(values["employed"]))
+        values["married"] = int(bool(values["married"]))
+        columns = ", ".join(_FULL_COLUMNS)
+        placeholders = ", ".join("?" for _ in _FULL_COLUMNS)
+        assignments = ", ".join(f"{name} = excluded.{name}" for name in _FULL_COLUMNS if name != "telegram_id")
+        async with self._lock:
+            # Existence check and write must not interleave with another upsert of the same student,
+            # otherwise both callers would report a brand-new registration (see ``upsert_student``).
+            row = await self._fetchone_unlocked("SELECT 1 FROM full_profiles WHERE telegram_id = ?", (telegram_id,))
+            is_update = row is not None
+            await self._write_unlocked(
+                f"""
+                INSERT INTO full_profiles ({columns}) VALUES ({placeholders})
+                ON CONFLICT(telegram_id) DO UPDATE SET
+                  {assignments},
+                  updated_at = datetime('now','localtime'),
+                  edited_at = datetime('now','localtime')
+                """,
+                tuple(values[name] for name in _FULL_COLUMNS),
+            )
+        profile = await self.get_full_profile_by_telegram_id(telegram_id)
+        assert profile is not None
+        return profile, is_update
+
+    async def update_full_profile(self, telegram_id: int, /, **fields: Any) -> FullProfile | None:
+        """Overwrite single columns, bump ``updated_at``/``edited_at`` and return the fresh row."""
+        if not fields:
+            raise ValueError("update_full_profile() needs at least one field")
+        unknown = sorted(set(fields) - FULL_EDITABLE_FIELDS)
+        if unknown:
+            raise ValueError(f"Not an editable full-profile field: {', '.join(unknown)}")
+        values = dict(fields)
+        for flag in ("employed", "married"):
+            if flag in values:
+                values[flag] = int(bool(values[flag]))
+        assignments = ", ".join(f"{name} = ?" for name in values)
+        cur = await self._write(
+            f"UPDATE full_profiles SET {assignments}, updated_at = datetime('now','localtime'),"
+            " edited_at = datetime('now','localtime') WHERE telegram_id = ?",
+            (*values.values(), telegram_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        return await self.get_full_profile_by_telegram_id(telegram_id)
+
+    async def get_full_profile_by_telegram_id(self, telegram_id: int) -> FullProfile | None:
+        row = await self._fetchone(_FULL_SELECT + " WHERE f.telegram_id = ?", (telegram_id,))
+        return _row_to_full(row) if row else None
+
+    async def get_full_profile(self, profile_id: int) -> FullProfile | None:
+        row = await self._fetchone(_FULL_SELECT + " WHERE f.id = ?", (profile_id,))
+        return _row_to_full(row) if row else None
+
+    async def delete_full_profile(self, profile_id: int, tutor_id: int | None = None) -> bool:
+        """Remove one full-survey row; with ``tutor_id`` only while it still belongs to that tutor."""
+        cur = await self._write(
+            "DELETE FROM full_profiles WHERE id = ? AND (? IS NULL OR tutor_id = ?)",
+            (profile_id, tutor_id, tutor_id),
+        )
+        return cur.rowcount > 0
+
+    async def list_full_profiles(
+        self, tutor_id: int | None = None, group_id: int | None = None
+    ) -> list[FullProfile]:
+        """Full-survey rows joined with tutor/group names, ordered by group then name."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if tutor_id is not None:
+            conditions.append("f.tutor_id = ?")
+            params.append(tutor_id)
+        if group_id is not None:
+            conditions.append("f.group_id = ?")
+            params.append(group_id)
+        sql = _FULL_SELECT
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY g.name COLLATE NOCASE, f.full_name COLLATE NOCASE, f.id"
+        rows = await self._fetchall(sql, tuple(params))
+        return [_row_to_full(r) for r in rows]
+
+    async def count_group_profiles(self, group_id: int) -> int:
+        row = await self._fetchone("SELECT COUNT(*) AS n FROM full_profiles WHERE group_id = ?", (group_id,))
+        assert row is not None
+        return int(row["n"])
+
+    async def find_full_profile_owner(self, *, passport: str, pinfl: str) -> int | None:
+        """Telegram id of whoever already holds this passport or PNFL (``None`` when nobody does)."""
+        row = await self._fetchone(
+            "SELECT telegram_id FROM full_profiles WHERE passport = ? OR pinfl = ?", (passport, pinfl)
+        )
+        return int(row["telegram_id"]) if row else None
+
+    async def update_tutor_phone(self, tutor_id: int, phone: str) -> bool:
+        cur = await self._write("UPDATE tutors SET phone = ? WHERE id = ?", (phone, tutor_id))
         return cur.rowcount > 0
 
     async def list_students(

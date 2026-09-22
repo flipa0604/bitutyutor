@@ -38,6 +38,7 @@ TUTOR_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="edit_group", description="Guruh nomini o'zgartirish"),
     BotCommand(command="delete_group", description="Guruhni o'chirish"),
     BotCommand(command="excel", description="Excel yuklab olish"),
+    BotCommand(command="phone", description="Telefon raqamim (to'liq anketa uchun)"),
 )
 
 

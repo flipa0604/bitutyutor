@@ -6,7 +6,7 @@ import re
 
 from collections.abc import Sequence
 
-from .models import BotUser, Student, TestUser, Tutor
+from .models import SURVEY_BASIC, SURVEY_FULL, BotUser, FullProfile, Student, TestUser, Tutor
 from .utils import clean_text, hesc
 
 # ----------------------------------------------------------------- buttons
@@ -34,6 +34,8 @@ BTN_ADMIN_TEST_USERS = "🧪 Test userlar"
 BTN_ADD_TEST_USER = "➕ Test user qo'shish"
 BTN_ADMIN_EXCEL_ALL = "📊 Excel (barcha tyutorlar)"
 BTN_ADMIN_EXCEL_PICK = "📊 Excel (tyutor bo'yicha)"
+BTN_ADMIN_EXCEL_FULL = "🗂 Excel: to'liq anketa (hamma)"
+BTN_EXCEL_FULL = "🗂 To'liq anketa"
 BTN_ADMIN_BROADCAST = "📢 Hammaga xabar"
 BTN_BC_SKIP = "⏭ O'tkazib yuborish"
 BTN_BC_CONTINUE = "➡️ Davom etish"
@@ -64,6 +66,8 @@ BTN_YES_SEND_MESSAGE = "✉️ Ha, xabar yuborish"
 BTN_EXCEL_BY_GROUP = "👥 Guruh bo'yicha"
 BTN_EXCEL_BY_RESIDENCE = "🏠 Turar joy bo'yicha"
 BTN_EXCEL_ALL_GROUPS = "📦 Barcha guruhlar (bitta faylda)"
+BTN_EXCEL_FULL_GROUP = "🗂 To'liq anketa: guruh bo'yicha"
+BTN_EXCEL_FULL_ALL = "🗂 To'liq anketa: barcha guruhlar"
 BTN_EXCEL_RES_UY = "🏡 O'z uyi"
 
 BTN_CONFIRM = "✅ Tasdiqlash"
@@ -164,12 +168,13 @@ HELP_TUTOR = (
     "/add_group — guruh qo'shish\n"
     "/edit_group — guruh nomini o'zgartirish\n"
     "/delete_group — guruhni o'chirish\n"
-    "/excel — Excel yuklab olish"
+    "/excel — Excel yuklab olish (📋 asosiy va 🗂 to'liq anketa)\n"
+    "/phone — telefon raqamim (to'liq anketa ro'yxatida ko'rinadi)"
 )
 HELP_STUDENT = (
     "📝 <b>Talaba</b>\n"
-    "/start — ro'yxatdan o'tish (tyutor va guruhni tanlab, ma'lumotlaringizni kiritasiz)\n"
-    "/mydata — ma'lumotlarimni ko'rish va tahrirlash\n"
+    "/start — anketani tanlash: 📋 asosiy yoki 🗂 to'liq (ikkalasi alohida saqlanadi)\n"
+    "/mydata — anketalarimni ko'rish va tahrirlash\n"
     "/cancel — joriy amalni bekor qilish\n"
     "/help — yordam"
 )
@@ -322,7 +327,11 @@ GROUP_DELETE_CONFIRM = (
 )
 GROUP_DELETED = "🗑 Guruh o'chirildi."
 GROUP_CARD = "👥 <b>Guruh:</b> {name}\n🎓 Talabalar: {count} ta\n🕒 Yaratilgan: {created_at}"
-EXCEL_MENU = "📊 Qaysi ma'lumotni yuklab olasiz?"
+EXCEL_MENU = (
+    "📊 Qaysi ma'lumotni yuklab olasiz?\n\n"
+    "Yuqoridagi uchtasi — 📋 asosiy anketa, pastdagilar — 🗂 to'liq anketa."
+)
+EXCEL_FULL_PICK_GROUP = "🗂 To'liq anketa: qaysi guruhni yuklab olasiz?"
 EXCEL_PICK_RESIDENCE = "🏠 Turar joy turini tanlang:"
 EXCEL_CAPTION = "📊 {title}\n🎓 Talabalar: {count} ta"
 
@@ -382,9 +391,248 @@ def broadcast_part_line(index: int, kind: str, summary: str) -> str:
     return f"{index}. {label} — «{hesc(summary)}»" if summary else f"{index}. {label}"
 
 
+# ------------------------------------------------------- surveys (two questionnaires)
+
+BTN_SURVEY_BASIC = "📋 Asosiy anketa"
+BTN_SURVEY_FULL = "🗂 To'liq anketa"
+SURVEY_LABELS: dict[str, str] = {SURVEY_BASIC: BTN_SURVEY_BASIC, SURVEY_FULL: BTN_SURVEY_FULL}
+SURVEY_SHORT_LABELS: dict[str, str] = {SURVEY_BASIC: "Asosiy anketa", SURVEY_FULL: "To'liq anketa"}
+SURVEY_ABOUT: dict[str, str] = {
+    SURVEY_BASIC: "F.I.SH, telefon, yo'nalish, turar joy va ota-onangiz — 8 ta savol",
+    SURVEY_FULL: "pasport, JShShR, yashash manzili, ish, oila va ijtimoiy holat — 22 ta savol",
+}
+SURVEY_PICK = (
+    "📝 <b>Qaysi anketani to'ldirasiz?</b>\n\n"
+    "{lines}\n\n"
+    "Ikkalasi bir-biridan mustaqil: birini to'ldirib, ikkinchisini keyin ham to'ldirishingiz mumkin."
+)
+SURVEY_PICK_EDIT = "✏️ <b>Qaysi anketani ko'rasiz yoki o'zgartirasiz?</b>\n\n{lines}"
+SURVEY_LINE_DONE = "✅ <b>{label}</b> — to'ldirilgan ({at})"
+SURVEY_LINE_TODO = "🕗 <b>{label}</b> — to'ldirilmagan · {about}"
+SURVEY_NOT_FILLED = "Siz <b>{label}</b> ni hali to'ldirmagansiz. Boshlaymiz 👇"
+SURVEY_STALE = "Bu tugma eskirgan — /start ni bosing."
+
+
+def survey_label(code: str) -> str:
+    return SURVEY_LABELS.get(code, code)
+
+
+def survey_lines(filled: dict[str, str | None]) -> str:
+    """One status line per survey; ``filled`` maps a code to the date it was filled (or ``None``)."""
+    lines = []
+    for code, label in SURVEY_LABELS.items():
+        at = filled.get(code)
+        if at:
+            lines.append(SURVEY_LINE_DONE.format(label=label, at=hesc(at)))
+        else:
+            lines.append(SURVEY_LINE_TODO.format(label=label, about=SURVEY_ABOUT[code]))
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------- full survey: buttons
+
+BTN_FULL_SKIP_PARENT = "⚠️ Ma'lumot yo'q"
+BTN_CITIZEN_UZ = "🇺🇿 O'zbekiston"
+BTN_CITIZEN_OTHER = "🌍 Boshqa davlat"
+BTN_EMPLOYED_YES = "💼 Ishlayman"
+BTN_EMPLOYED_NO = "🚫 Ishlamayman"
+BTN_MARRIED_YES = "💍 Oila qurganman"
+BTN_MARRIED_NO = "🙅 Oila qurmaganman"
+BTN_SOCIAL_NONE = "🚫 Hech biri"
+BTN_SOCIAL_DONE = "✅ Tayyor"
+BTN_EDIT_FULL_DATA = "✏️ Anketani tahrirlash"
+
+CITIZENSHIP_UZ = "O'zbekiston"
+SOCIAL_LABELS: dict[str, str] = {
+    "yoshlar_daftari": "Yoshlar daftari",
+    "ijtimoiy_reestr": "Ijtimoiy himoya reestri",
+    "kam_taminlangan": "Kam ta'minlangan",
+    "nogiron": "Nogironligi bor",
+    "yetim": "Yetim",
+    "chin_yetim": "Chin yetim",
+}
+SOCIAL_NONE_LABEL = "Yo'q"
+NO_DATA_VALUE = "—"  # what a deliberately skipped parent field holds
+
+
+def social_labels(codes: Sequence[str]) -> str:
+    names = [SOCIAL_LABELS[c] for c in codes if c in SOCIAL_LABELS]
+    return ", ".join(names) if names else SOCIAL_NONE_LABEL
+
+
+def course_label(course: int) -> str:
+    return f"{course}-kurs"
+
+
+# ------------------------------------------------------- full survey: questions
+
+FULL_TOTAL_STEPS = 22
+FULL_INTRO = (
+    "🗂 <b>To'liq anketa</b>\n\n"
+    "{n} ta savol. Javoblar tyutoringiz va universitet ro'yxatiga tushadi, shuning uchun "
+    "ma'lumotlar <b>haqiqiy</b> bo'lishi shart: pasport va JShShR tekshiriladi, telefon raqami "
+    "Telegram hisobingizdan olinadi.\n\n"
+    "Istalgan paytda ⬅️ Orqaga bilan bir qadam qaytishingiz yoki ❌ Bekor qilish bilan to'xtatishingiz mumkin."
+)
+FULL_STEP_PREFIX = "📊 <b>{n}/{total}</b>"
+
+FULL_ASK_PHONE = (
+    "📞 Telefon raqamingiz.\n\n"
+    "Pastdagi <b>📱 Raqamni yuborish</b> tugmasini bosing — raqam Telegram hisobingizdan olinadi "
+    "(qo'lda kiritib bo'lmaydi)."
+)
+FULL_PHONE_BUTTON_ONLY = (
+    "❗️ Raqamni faqat <b>📱 Raqamni yuborish</b> tugmasi orqali yuboring — qo'lda yozilgan raqam qabul qilinmaydi."
+)
+FULL_ASK_FULL_NAME = "👤 F.I.SH ingizni to'liq kiriting (pasportdagidek, masalan: Aliyev Vali G'aniyevich):"
+FULL_ASK_DIRECTION = "🎓 Ta'lim yo'nalishingizni kiriting (masalan: Dasturiy injiniring):"
+FULL_ASK_COURSE = "📚 Nechanchi kursda o'qiysiz?"
+FULL_COURSE_INVALID = "❗️ Pastdagi tugmalardan kursni tanlang (1–6)."
+FULL_ASK_BIRTH = "🎂 Tug'ilgan kun, oy, yilingiz (masalan: 05.03.2004):"
+FULL_BIRTH_INVALID = (
+    "❗️ Sana noto'g'ri. Namuna: <b>05.03.2004</b> (kun.oy.yil). "
+    "Yosh {min} dan {max} gacha bo'lishi kerak."
+)
+FULL_ASK_PASSPORT = "🪪 Pasport seriya va raqami (masalan: AA1234567):"
+FULL_PASSPORT_INVALID = "❗️ Pasport noto'g'ri. Namuna: <b>AA1234567</b> — 2 ta harf va 7 ta raqam."
+FULL_ASK_PINFL = (
+    "🔢 Pasportdagi JShShR (PNFL) — 14 xonali raqam.\n\n"
+    "U pasportingizning pastki qismida yozilgan va tug'ilgan sanangizga mos bo'lishi kerak."
+)
+FULL_PINFL_INVALID = (
+    "❗️ JShShR noto'g'ri: 14 ta raqam bo'lishi va tug'ilgan sanangizga ({birth}) mos kelishi kerak. "
+    "Pasportdan ko'chirib yozing."
+)
+FULL_IDENTITY_TAKEN = (
+    "❗️ Bu pasport yoki JShShR allaqachon boshqa foydalanuvchi tomonidan kiritilgan. "
+    "O'z ma'lumotlaringizni kiriting yoki tyutoringizga murojaat qiling."
+)
+FULL_ASK_CITIZENSHIP = "🌐 Fuqaroligingiz?"
+FULL_ASK_CITIZENSHIP_OTHER = "🌍 Qaysi davlat fuqarosisiz? Davlat nomini kiriting:"
+FULL_ASK_REGION = "📍 Yashash viloyatingizni tanlang:"
+FULL_REGION_INVALID = "❗️ Ro'yxatdagi viloyatlardan birini tanlang."
+FULL_ASK_DISTRICT = "🏙 Shahar yoki tumaningiz (masalan: Chilonzor tumani):"
+FULL_ASK_MFY = "🏘 MFY (mahalla) nomi:"
+FULL_ASK_MFY_CONTACT = (
+    "📞 MFY raqami — mahalla raisi yoki yoshlar yetakchisining telefon raqami (+998901234567):"
+)
+FULL_ASK_STREET = "🏠 Ko'cha va uy raqamingiz (masalan: Navoiy ko'chasi, 12-uy, 5-xonadon):"
+FULL_ASK_EMPLOYED = "💼 Ish bilan bandmisiz?"
+FULL_ASK_WORK_PLACE = "🏢 Ishlaydigan tashkilotingiz nomi:"
+FULL_ASK_WORK_POSITION = "🧾 Lavozimingiz:"
+FULL_ASK_WORK_ADDRESS = "📍 Tashkilot joylashgan joyi (viloyat, tuman, ko'cha):"
+FULL_ASK_WORK_PHONE = "📞 Tashkilot telefon raqami (+998901234567 yoki +998712001122):"
+FULL_ASK_MARRIED = "💍 Oila qurganmisiz?"
+FULL_ASK_SPOUSE_NAME = "👤 Turmush o'rtog'ingizning F.I.SH:"
+FULL_ASK_SPOUSE_WORK = "🏢 Turmush o'rtog'ingizning ish joyi (ishlamasa: ishlamaydi):"
+FULL_ASK_SPOUSE_PHONE = "📞 Turmush o'rtog'ingizning telefon raqami:"
+FULL_ASK_SOCIAL = (
+    "🧾 Ijtimoiy holatingiz. Tegishlilarini belgilang (bir nechtasini tanlash mumkin), "
+    "so'ng ✅ Tayyor ni bosing. Hech biri tegishli bo'lmasa — 🚫 Hech biri."
+)
+FULL_ASK_FATHER_NAME = "👨 Otangizning F.I.SH:"
+FULL_ASK_FATHER_PHONE = "📞 Otangizning telefon raqami:"
+FULL_ASK_FATHER_WORK = "🏢 Otangizning ish joyi (ishlamasa: ishlamaydi):"
+FULL_ASK_MOTHER_NAME = "👩 Onangizning F.I.SH:"
+FULL_ASK_MOTHER_PHONE = "📞 Onangizning telefon raqami:"
+FULL_ASK_MOTHER_WORK = "🏢 Onangizning ish joyi (ishlamasa: uy bekasi):"
+FULL_PARENT_SKIP_HINT = "Ma'lumot bo'lmasa (masalan, ota-ona vafot etgan bo'lsa) — ⚠️ Ma'lumot yo'q tugmasini bosing."
+FULL_TEXT_INVALID = "❗️ Javob {min}–{max} belgidan iborat bo'lishi kerak. Qaytadan kiriting:"
+FULL_USE_BUTTONS = "❗️ Pastdagi tugmalardan birini tanlang."
+FULL_NOTHING_TO_GO_BACK = "Bu birinchi savol — ortga qaytadigan qadam yo'q."
+FULL_PREVIEW_TITLE = "📋 To'liq anketa — ma'lumotlaringizni tekshiring"
+FULL_SAVED = "✅ To'liq anketa saqlandi. Rahmat!"
+FULL_RESTARTED = "🔄 To'liq anketani qaytadan boshlaymiz."
+FULL_CARD_TITLE_NEW = "🆕 Talaba to'liq anketani to'ldirdi"
+FULL_CARD_TITLE_UPDATE = "🔄 Talaba to'liq anketani yangiladi"
+FULL_HOME_TITLE = "🗂 To'liq anketangiz"
+FULL_EDIT_MENU = "✏️ To'liq anketada qaysi ma'lumotni o'zgartirasiz?"
+FULL_GONE = (
+    "❗️ To'liq anketangiz topilmadi — tyutoringiz sizni ro'yxatdan o'chirgan yoki guruhingiz "
+    "o'chirilgan bo'lishi mumkin."
+)
+
+# tutor's own phone (a column of the full survey the student never fills in)
+TUTOR_PHONE_MISSING = (
+    "📞 <b>Telefon raqamingiz kiritilmagan.</b>\n\n"
+    "To'liq anketa ro'yxatida har bir talabaning yonida tyutorning raqami turadi. "
+    "Pastdagi tugma orqali raqamingizni yuboring."
+)
+BTN_TUTOR_PHONE = "📞 Telefon raqamim"
+TUTOR_ASK_PHONE = "📞 Telefon raqamingizni yuboring (📱 tugma orqali yoki +998901234567 ko'rinishida):"
+TUTOR_PHONE_SAVED = "✅ Telefon raqamingiz saqlandi: {phone}"
+TUTOR_PHONE_CURRENT = "📞 Telefon raqamingiz: <b>{phone}</b>\n\nO'zgartirish uchun yangi raqamni yuboring:"
+
+
+def full_student_card(title: str, profile: FullProfile) -> str:
+    """The full survey as one card. Every user-supplied value is HTML-escaped."""
+    telegram = f"@{hesc(profile.username)} " if profile.username else ""
+    lines = [
+        title,
+        "",
+        f"👨‍🏫 Tyutor: {hesc(profile.tutor_name)}" + (f" ({hesc(profile.tutor_phone)})" if profile.tutor_phone else ""),
+        f"👥 Guruh: {hesc(profile.group_name)}",
+        "",
+        f"👤 F.I.SH: {hesc(profile.full_name)}",
+        f"📞 Telefon: {hesc(profile.phone)}",
+        f"🎓 Yo'nalish: {hesc(profile.direction)}",
+        f"📚 Kurs: {course_label(profile.course)}",
+        f"🪪 Pasport: {hesc(profile.passport)}",
+        f"🔢 JShShR: {hesc(profile.pinfl)}",
+        f"🎂 Tug'ilgan sana: {hesc(profile.birth_date)}",
+        f"🌐 Fuqaroligi: {hesc(profile.citizenship)}",
+        "",
+        f"📍 Viloyat: {hesc(profile.region)}",
+        f"🏙 Shahar/tuman: {hesc(profile.district)}",
+        f"🏘 MFY: {hesc(profile.mfy)}",
+        f"📞 MFY raqami: {hesc(profile.mfy_contact)}",
+        f"🏠 Ko'cha, uy: {hesc(profile.street)}",
+        "",
+    ]
+    if profile.employed:
+        lines += [
+            "💼 Ish bilan band: ha",
+            f"🏢 Tashkilot: {hesc(profile.work_place)}",
+            f"🧾 Lavozim: {hesc(profile.work_position)}",
+            f"📍 Tashkilot joyi: {hesc(profile.work_address)}",
+            f"📞 Tashkilot tel: {hesc(profile.work_phone)}",
+        ]
+    else:
+        lines.append("💼 Ish bilan band: yo'q")
+    if profile.married:
+        lines += [
+            "",
+            "💍 Oila qurgan: ha",
+            f"👤 Turmush o'rtog'i: {hesc(profile.spouse_name)}",
+            f"🏢 Ish joyi: {hesc(profile.spouse_work)}",
+            f"📞 Telefoni: {hesc(profile.spouse_phone)}",
+        ]
+    else:
+        lines.append("💍 Oila qurgan: yo'q")
+    lines += [
+        "",
+        f"🧾 Ijtimoiy holati: {hesc(social_labels(profile.social_codes))}",
+        "",
+        f"👨 Otasi: {hesc(profile.father_name)}",
+        f"📞 Otasining tel: {hesc(profile.father_phone)}",
+        f"🏢 Otasining ish joyi: {hesc(profile.father_work)}",
+        f"👩 Onasi: {hesc(profile.mother_name)}",
+        f"📞 Onasining tel: {hesc(profile.mother_phone)}",
+        f"🏢 Onasining ish joyi: {hesc(profile.mother_work)}",
+        "",
+        f"🆔 Telegram: {telegram}(ID: {profile.telegram_id})",
+    ]
+    if profile.created_at:
+        lines.append(f"🕒 To'ldirilgan: {hesc(profile.created_at)}")
+    if profile.edited_at:
+        lines.append(f"✏️ Yangilangan: {hesc(profile.edited_at)}")
+    return "\n".join(lines)
+
+
 # ------------------------------------------- student management (tutor / superadmin)
 
 STUDENT_PICK_GROUP = "🎓 Qaysi guruh talabalarini ko'rasiz?"
+STUDENT_PICK_SURVEY = "🎓 <b>{group}</b> guruhi{tutor}\n\nQaysi anketa bo'yicha ro'yxatni ochasiz?"
 STUDENT_LIST_TITLE = "🎓 <b>{group}</b> guruhi talabalari ({n} ta){tutor}\n\nTalabani tanlang:"
 STUDENT_LIST_EMPTY = "📭 <b>{group}</b> guruhida hali talabalar yo'q.{tutor}"
 STUDENT_LIST_TUTOR_LINE = "\n👨‍🏫 Tyutor: {tutor}"  # ``{tutor}`` above: this line for a superadmin, "" for the tutor
@@ -392,9 +640,10 @@ STUDENT_CARD_TITLE = "🎓 Talaba ma'lumotlari"
 STUDENT_NOT_FOUND = "❗️ Talaba topilmadi (o'chirilgan bo'lishi mumkin)."
 STUDENT_DELETE_CONFIRM = (
     "⚠️ Talaba <b>{name}</b> ma'lumotlarini o'chirmoqchimisiz?\n\n"
-    "👥 Guruh: {group}\n\n"
-    "Ro'yxatdan o'tishda kiritgan barcha ma'lumotlari bazadan o'chiriladi va keyingi Excel fayllarida "
-    "ko'rinmaydi. Talaba xohlasa /start orqali qaytadan ro'yxatdan o'ta oladi."
+    "👥 Guruh: {group}\n"
+    "🗂 Anketa: {survey}\n\n"
+    "Shu anketada kiritgan barcha ma'lumotlari bazadan o'chiriladi va keyingi Excel fayllarida "
+    "ko'rinmaydi (ikkinchi anketasiga tegilmaydi). Talaba xohlasa /start orqali qaytadan to'ldira oladi."
 )
 STUDENT_DELETED_TOAST = "🗑 Talaba o'chirildi"
 STUDENT_DELETED = "🗑 Talaba <b>{name}</b> o'chirildi."

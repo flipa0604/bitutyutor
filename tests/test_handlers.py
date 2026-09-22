@@ -73,7 +73,7 @@ async def register_ttj(
     student who already has a saved row sees their own card first and reopens the flow with the
     "register again" button -- available to test users only.
     """
-    await feed(dp, bot, text_update(user, start_text))
+    await feed(dp, bot, text_update(user, start_text), callback_update(user, "sv:fill:basic"))
     if already_registered:
         await feed(dp, bot, callback_update(user, "edt:again:"))
     await feed(
@@ -102,7 +102,7 @@ async def test_registration_ttj_path_and_deduplicated_notifications(
     group = await db.add_group(tutor.id, "DI-21")
     student = make_user(STUDENT_TG, username="vali")
 
-    await feed(dp, bot, text_update(student, "/start"))
+    await feed(dp, bot, text_update(student, "/start"), callback_update(student, "sv:fill:basic"))
     assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
 
     await register_ttj(dp, bot, session, student, tutor.id, group.id)
@@ -123,8 +123,8 @@ async def test_registration_ttj_path_and_deduplicated_notifications(
     assert "@vali" in cards[0].text and "Aliyev Vali G'aniyevich" in cards[0].text
     assert "🏠 Turar joy: TTJ" in cards[0].text
 
-    # every callback was answered
-    assert len(session.of("AnswerCallbackQuery")) == 3
+    # every callback was answered (2 survey picks, tutor, group, confirm)
+    assert len(session.of("AnswerCallbackQuery")) == 5
 
     # registering again is an update -- allowed because this student is on the tester list
     session.clear()
@@ -146,6 +146,7 @@ async def test_registration_kvartira_asks_address_and_escapes_html(
         dp,
         bot,
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -185,6 +186,7 @@ async def test_phone_validation_and_contact_ownership(
         dp,
         bot,
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
     )
@@ -209,7 +211,13 @@ async def test_cancel_and_unknown_input(dp: Dispatcher, bot: Bot, session: FakeS
     tutor = await db.add_tutor("Tutor One", TUTOR_TG)
     await db.add_group(tutor.id, "AI-22")
     student = make_user(STUDENT_TG)
-    await feed(dp, bot, text_update(student, "/start"), callback_update(student, f"reg:tutor:{tutor.id}"))
+    await feed(
+        dp,
+        bot,
+        text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
+        callback_update(student, f"reg:tutor:{tutor.id}"),
+    )
     await feed(dp, bot, text_update(student, texts.BTN_CANCEL))
     assert session.last_text(STUDENT_TG) == texts.CANCELLED_STUDENT
     assert await dp.fsm.get_context(bot, STUDENT_TG, STUDENT_TG).get_state() is None
@@ -459,7 +467,13 @@ async def test_registration_navigation_and_role_user_finish(
     group = await db.add_group(tutor.id, "DI-21")
     admin = make_user(SUPERADMIN_ID)
 
-    await feed(dp, bot, text_update(admin, texts.BTN_REGISTER), callback_update(admin, f"reg:tutor:{empty_tutor.id}"))
+    await feed(
+        dp,
+        bot,
+        text_update(admin, texts.BTN_REGISTER),
+        callback_update(admin, "sv:fill:basic"),
+        callback_update(admin, f"reg:tutor:{empty_tutor.id}"),
+    )
     assert session.last_text(SUPERADMIN_ID) == texts.REG_TUTOR_NO_GROUPS
     await feed(dp, bot, callback_update(admin, "reg:back:0"))
     assert session.last_text(SUPERADMIN_ID) == texts.REG_CHOOSE_TUTOR
@@ -481,12 +495,18 @@ async def test_registration_navigation_and_role_user_finish(
     assert sorted(m.chat_id for m in cards) == [SUPERADMIN_ID, SECOND_SUPERADMIN_ID, TUTOR_TG]
 
     # cancel via inline button and "no tutors" start
-    await feed(dp, bot, text_update(admin, texts.BTN_REGISTER), callback_update(admin, "reg:cancel:0"))
+    await feed(
+        dp,
+        bot,
+        text_update(admin, texts.BTN_REGISTER),
+        callback_update(admin, "sv:fill:basic"),
+        callback_update(admin, "reg:cancel:0"),
+    )
     assert session.last_text(SUPERADMIN_ID) == texts.CANCELLED
     for t in await db.list_tutors():
         await db.delete_tutor(t.id)
     stranger = make_user(8008)
-    await feed(dp, bot, text_update(stranger, "/start"))
+    await feed(dp, bot, text_update(stranger, "/start"), callback_update(stranger, "sv:fill:basic"))
     assert session.last_text(8008) == texts.REG_NO_TUTORS
 
 
@@ -500,6 +520,7 @@ async def test_group_deleted_mid_registration_restarts(
         dp,
         bot,
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -529,7 +550,7 @@ async def test_registered_student_sees_their_card_and_cannot_register_again(
     await register_ttj(dp, bot, session, student, tutor.id, group.id)
     session.clear()
 
-    await feed(dp, bot, text_update(student, "/start"))
+    await feed(dp, bot, text_update(student, "/start"), callback_update(student, "sv:open:basic"))
     card = session.of("SendMessage")[-1]
     assert texts.STUDENT_HOME_TITLE in str(card.text)
     assert "Aliyev Vali G'aniyevich" in str(card.text)
@@ -554,7 +575,7 @@ async def test_test_user_keeps_both_edit_and_register_again(
     await db.add_test_user(STUDENT_TG)
     session.clear()
 
-    await feed(dp, bot, text_update(student, "/start"))
+    await feed(dp, bot, text_update(student, "/start"), callback_update(student, "sv:open:basic"))
     card = session.of("SendMessage")[-1]
     assert inline_data(card.reply_markup) == {"edt:open:", "edt:again:"}
 
@@ -564,7 +585,7 @@ async def test_test_user_keeps_both_edit_and_register_again(
     # removing them from the list takes the button away again
     await db.remove_test_user(STUDENT_TG)
     session.clear()
-    await feed(dp, bot, text_update(student, "/start"))
+    await feed(dp, bot, text_update(student, "/start"), callback_update(student, "sv:open:basic"))
     assert inline_data(session.of("SendMessage")[-1].reply_markup) == {"edt:open:"}
 
 
@@ -619,8 +640,10 @@ async def test_mydata_starts_registration_when_nothing_is_saved(
     tutor = await db.add_tutor("Karimov Aziz", TUTOR_TG)
     await db.add_group(tutor.id, "DI-21")
 
-    await feed(dp, bot, text_update(make_user(STUDENT_TG), "/mydata"))
-    assert texts.STUDENT_NOT_REGISTERED in session.sent_texts(STUDENT_TG)
+    student = make_user(STUDENT_TG)
+    await feed(dp, bot, text_update(student, "/mydata"))
+    assert "Qaysi anketani" in session.last_text(STUDENT_TG)  # nothing saved: both offered to fill in
+    await feed(dp, bot, callback_update(student, "sv:fill:basic"))
     assert session.last_text(STUDENT_TG) == texts.REG_CHOOSE_TUTOR
 
 

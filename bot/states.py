@@ -69,6 +69,56 @@ class Registration(StatesGroup):
     confirm = State()
 
 
+class FullSurvey(StatesGroup):
+    """The full questionnaire (``bot.handlers.full``), used for filling it in and for editing it.
+
+    One state per question plus the two pickers and the preview; which questions are asked, in what
+    order, and where an answer goes is decided by the step table in ``bot.handlers.full``, not here.
+    ``menu`` is the field picker a saved profile is edited from.
+    """
+
+    choose_tutor = State()
+    choose_group = State()
+    phone = State()
+    full_name = State()
+    direction = State()
+    course = State()
+    birth_date = State()
+    passport = State()
+    pinfl = State()
+    citizenship = State()
+    citizenship_other = State()
+    region = State()
+    district = State()
+    mfy = State()
+    mfy_contact = State()
+    street = State()
+    employed = State()
+    work_place = State()
+    work_position = State()
+    work_address = State()
+    work_phone = State()
+    married = State()
+    spouse_name = State()
+    spouse_work = State()
+    spouse_phone = State()
+    social = State()
+    father_name = State()
+    father_phone = State()
+    father_work = State()
+    mother_name = State()
+    mother_phone = State()
+    mother_work = State()
+    confirm = State()
+    menu = State()
+
+
+class TutorPhone(StatesGroup):
+    """A tutor typing (or sharing) their own phone number for the full survey's report."""
+
+    phone = State()
+
+
 class StudentEdit(StatesGroup):
     """Editing an already saved registration, one field at a time.
 

@@ -18,7 +18,7 @@ from ..db import Database
 from ..filters import get_roles
 from ..keyboards import main_menu_kb
 from ..utils import hesc
-from .student import show_student_home, start_registration
+from .student import show_survey_picker
 
 
 async def cmd_start(message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot) -> None:
@@ -30,10 +30,9 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, settings:
     await db.touch_user(user.id, user.username, user.full_name)
     is_admin, is_tutor = await get_roles(db, settings, user.id)
     if not (is_admin or is_tutor):
-        # Someone already registered lands on their own card with the edit buttons; only a user with
-        # nothing saved is pushed straight into the registration flow.
-        if not await show_student_home(bot, user.id, state, db):
-            await start_registration(bot, message.chat.id, state, db)
+        # Two questionnaires now: the student picks which one they mean, and the picker shows which
+        # of them is already filled in (tapping a finished one opens its card with the edit buttons).
+        await show_survey_picker(bot, user.id, state, db)
         return
     await message.answer(
         texts.GREETING.format(name=hesc(user.full_name)),

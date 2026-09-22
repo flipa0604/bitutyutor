@@ -359,6 +359,8 @@ async def register(
     """
     uid = user.id
     await h.feed(text_update(user, start_text))
+    assert "Qaysi anketani" in h.last_text(uid)  # the picker comes first now
+    await h.feed(callback_update(user, "sv:fill:basic"))
     if already_registered:
         assert texts.STUDENT_HOME_TITLE in h.last_text(uid)
         await h.feed(callback_update(user, "edt:again:"))
@@ -530,6 +532,7 @@ async def test_address_validation_and_typed_residence_words(h: Harness) -> None:
     student = make_user(STUDENT)
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -572,6 +575,7 @@ async def test_typed_residence_accepts_phone_keyboard_apostrophes(h: Harness, ty
     student = make_user(STUDENT)
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -608,6 +612,7 @@ async def _go_to_phone_step(h: Harness, student: User) -> None:
     group = await h.db.add_group(tutor.id, "DI-21")
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
     )
@@ -664,6 +669,7 @@ async def test_phone_from_own_contact_ends_up_in_db(h: Harness) -> None:
     student = make_user(STUDENT)
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         contact_update(student, "998 90 765-43-21", STUDENT),
@@ -1104,6 +1110,7 @@ async def test_cancel_mid_registration_clears_state(h: Harness) -> None:
 
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -1127,6 +1134,7 @@ async def test_cancel_mid_registration_clears_state(h: Harness) -> None:
     # cancel button in a later step behaves the same
     await h.feed(
         text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
         callback_update(student, f"reg:tutor:{tutor.id}"),
         callback_update(student, f"reg:group:{group.id}"),
         text_update(student, "+998901234567"),
@@ -1153,6 +1161,7 @@ async def test_cancel_for_role_user_returns_to_main_menu(h: Harness) -> None:
     user = make_user(BOTH)
     await h.feed(
         text_update(user, texts.BTN_REGISTER),
+        callback_update(user, "sv:fill:basic"),
         callback_update(user, f"reg:tutor:{tutor.id}"),
         callback_update(user, f"reg:group:{group.id}"),
     )
@@ -1191,8 +1200,10 @@ async def test_start_for_both_roles_shows_additive_menu(h: Harness) -> None:
     await h.feed(text_update(user, "/help"))
     assert "/add_tutor" in h.last_text(BOTH) and "/add_group" in h.last_text(BOTH)
 
-    # ... and the register button starts registration for a role user
+    # ... and the register button opens the survey picker for a role user too
     await h.feed(text_update(user, texts.BTN_REGISTER))
+    assert "Qaysi anketani" in h.last_text(BOTH)
+    await h.feed(callback_update(user, "sv:fill:basic"))
     assert h.last_text(BOTH) == texts.REG_CHOOSE_TUTOR
 
 
@@ -1207,8 +1218,14 @@ async def test_start_menus_for_single_roles_and_students(h: Harness) -> None:
     buttons = reply_button_texts(h.last_message(TUTOR).reply_markup)
     assert buttons == [texts.BTN_TUTOR_PANEL, texts.BTN_REGISTER]
 
-    # plain student goes straight into registration
+    # plain student is asked which questionnaire first, then goes into it
     await h.feed(text_update(make_user(STUDENT), "/start"))
+    assert "Qaysi anketani" in h.last_text(STUDENT)
+    assert inline_buttons(h.last_message(STUDENT).reply_markup) == {
+        "sv:fill:basic": f"🕗 {texts.BTN_SURVEY_BASIC}",
+        "sv:fill:full": f"🕗 {texts.BTN_SURVEY_FULL}",
+    }
+    await h.feed(callback_update(make_user(STUDENT), "sv:fill:basic"))
     assert h.last_text(STUDENT) == texts.REG_CHOOSE_TUTOR
     assert await h.state_of(STUDENT) == Registration.choose_tutor.state
 
@@ -1218,7 +1235,11 @@ async def test_start_menus_for_single_roles_and_students(h: Harness) -> None:
 
 
 async def test_start_without_tutors_stops(h: Harness) -> None:
-    await h.feed(text_update(make_user(STUDENT), "/start"))
+    student = make_user(STUDENT)
+    await h.feed(text_update(student, "/start"), callback_update(student, "sv:fill:basic"))
+    assert h.last_text(STUDENT) == texts.REG_NO_TUTORS
+    assert await h.state_of(STUDENT) is None
+    await h.feed(callback_update(student, "sv:fill:full"))  # the full survey needs tutors just as much
     assert h.last_text(STUDENT) == texts.REG_NO_TUTORS
     assert await h.state_of(STUDENT) is None
 
@@ -1391,7 +1412,7 @@ async def test_admin_commands_and_menu_buttons_preempt_admin_fsm(h: Harness) -> 
     await h.feed(text_update(admin, texts.BTN_TUTOR_PANEL))
     assert await h.data_of(SUPERADMIN) == {}
     # the register button does start registration from inside the admin FSM
-    await h.feed(text_update(admin, texts.BTN_REGISTER))
+    await h.feed(text_update(admin, texts.BTN_REGISTER), callback_update(admin, "sv:fill:basic"))
     assert h.last_text(SUPERADMIN) == texts.REG_CHOOSE_TUTOR
     assert await h.state_of(SUPERADMIN) == Registration.choose_tutor.state
     await h.feed(text_update(admin, "/cancel"))
@@ -1444,7 +1465,8 @@ async def test_tutor_commands_preempt_tutor_fsm(h: Harness) -> None:
         ("/edit_group", texts.GROUP_PICK_EDIT),
         ("/delete_group", texts.GROUP_PICK_DELETE),
         ("/groups", texts.GROUP_LIST_TITLE.format(n=1)),
-        ("/tutor", texts.TUTOR_PANEL.format(name="Karimov Aziz")),
+        # the panel also reminds a tutor who has not given their phone number yet
+        ("/tutor", texts.TUTOR_PANEL.format(name="Karimov Aziz") + "\n\n" + texts.TUTOR_PHONE_MISSING),
     ):
         await h.feed(text_update(tutor_user, "/add_group"))
         assert await h.state_of(TUTOR) == TutorGroupAdd.name.state
@@ -1496,7 +1518,11 @@ async def test_tutor_without_groups_and_back_navigation(h: Harness) -> None:
     group = await h.db.add_group(full.id, "DI-21")
     student = make_user(STUDENT)
 
-    await h.feed(text_update(student, "/start"), callback_update(student, f"reg:tutor:{empty.id}"))
+    await h.feed(
+        text_update(student, "/start"),
+        callback_update(student, "sv:fill:basic"),
+        callback_update(student, f"reg:tutor:{empty.id}"),
+    )
     assert h.last_text(STUDENT) == texts.REG_TUTOR_NO_GROUPS
     kb = inline_buttons(h.last_shown(STUDENT).reply_markup)
     assert "reg:back:0" in kb and not any(d.startswith("reg:group:") for d in kb)
