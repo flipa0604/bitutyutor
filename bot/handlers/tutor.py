@@ -70,7 +70,12 @@ def _panel_text(tutor: Tutor) -> str:
 
 
 def _group_card(group: Group) -> str:
-    return texts.GROUP_CARD.format(name=hesc(group.name), count=group.student_count, created_at=hesc(group.created_at))
+    return texts.GROUP_CARD.format(
+        name=hesc(group.name),
+        count=group.student_count,
+        profiles=group.profile_count,
+        created_at=hesc(group.created_at),
+    )
 
 
 async def _group_list(
@@ -281,7 +286,9 @@ async def cb_delete(callback: CallbackQuery, callback_data: TutorCb, db: Databas
     await edit_or_send(
         callback,
         bot,
-        texts.GROUP_DELETE_CONFIRM.format(name=hesc(group.name), count=group.student_count),
+        texts.GROUP_DELETE_CONFIRM.format(
+            name=hesc(group.name), count=group.student_count, profiles=group.profile_count
+        ),
         tutor_confirm_delete_kb(group.id),
     )
 

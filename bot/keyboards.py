@@ -335,7 +335,7 @@ def admin_group_list_kb(groups: Sequence[Group], tutor_id: int) -> InlineKeyboar
     b = InlineKeyboardBuilder()
     for group in groups:
         b.button(
-            text=texts.group_button_label(group.name, group.student_count),
+            text=texts.group_button_label(group.name, group.student_count, group.profile_count),
             callback_data=StuCb(action=STU_SURVEYS, id=group.id, via=VIA_ADMIN),
         )
     b.adjust(1)
@@ -398,7 +398,7 @@ def tutor_group_list_kb(
             data = StuCb(action=STU_SURVEYS, id=group.id, via=VIA_TUTOR).pack()
         else:
             data = TutorCb(action=action, group_id=group.id).pack()
-        b.button(text=texts.group_button_label(group.name, group.student_count), callback_data=data)
+        b.button(text=texts.group_button_label(group.name, group.student_count, group.profile_count), callback_data=data)
     b.adjust(1)
     if not groups:
         b.row(InlineKeyboardButton(text=texts.BTN_TUTOR_ADD_GROUP, callback_data=TutorCb(action=TUT_ADD).pack()))

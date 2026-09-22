@@ -143,7 +143,9 @@ JOIN groups g ON g.id = s.group_id
 """
 
 _GROUP_SELECT = """
-SELECT g.*, (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) AS student_count
+SELECT g.*,
+       (SELECT COUNT(*) FROM students s WHERE s.group_id = g.id) AS student_count,
+       (SELECT COUNT(*) FROM full_profiles f WHERE f.group_id = g.id) AS profile_count
 FROM groups g
 """
 
@@ -246,6 +248,7 @@ def _row_to_group(row: aiosqlite.Row) -> Group:
         name=row["name"],
         created_at=row["created_at"],
         student_count=row["student_count"],
+        profile_count=row["profile_count"],
     )
 
 
@@ -485,14 +488,17 @@ class Database:
         cur = await self._write("DELETE FROM tutors WHERE id = ?", (tutor_id,))
         return cur.rowcount > 0
 
-    async def count_tutor_groups_and_students(self, tutor_id: int) -> tuple[int, int]:
+    async def count_tutor_groups_and_students(self, tutor_id: int) -> tuple[int, int, int]:
+        """``(groups, basic-survey students, full-survey students)`` -- the two surveys are counted
+        apart, because a student may have filled either one without the other."""
         row = await self._fetchone(
             "SELECT (SELECT COUNT(*) FROM groups WHERE tutor_id = ?) AS groups_n,"
-            " (SELECT COUNT(*) FROM students WHERE tutor_id = ?) AS students_n",
-            (tutor_id, tutor_id),
+            " (SELECT COUNT(*) FROM students WHERE tutor_id = ?) AS students_n,"
+            " (SELECT COUNT(*) FROM full_profiles WHERE tutor_id = ?) AS profiles_n",
+            (tutor_id, tutor_id, tutor_id),
         )
         assert row is not None
-        return int(row["groups_n"]), int(row["students_n"])
+        return int(row["groups_n"]), int(row["students_n"]), int(row["profiles_n"])
 
     # ------------------------------------------------------------------- groups
 

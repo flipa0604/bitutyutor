@@ -61,6 +61,9 @@ class Group:
     name: str
     created_at: str
     student_count: int = 0
+    """How many filled the basic questionnaire in this group."""
+    profile_count: int = 0
+    """How many filled the full one -- a different set of people, counted on its own."""
 
 
 @dataclass(frozen=True, slots=True)

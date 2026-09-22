@@ -118,7 +118,7 @@ async def test_upsert_student_and_counts(db: Database) -> None:
     assert await db.get_student_by_telegram_id(100) == again
     assert await db.get_student_by_telegram_id(101) is None
     assert await db.count_group_students(group.id) == 1
-    assert await db.count_tutor_groups_and_students(tutor.id) == (1, 1)
+    assert await db.count_tutor_groups_and_students(tutor.id) == (1, 1, 0)
     fetched = await db.get_group(group.id)
     assert fetched is not None and fetched.student_count == 1
 
@@ -219,18 +219,18 @@ async def test_cascade_delete(db: Database) -> None:
     for tg_id, group in ((1, g1), (2, g1), (3, g2)):
         await db.upsert_student(**student_kwargs(tg_id, tutor.id, group.id))
     await db.upsert_student(**student_kwargs(4, keep.id, kg.id))
-    assert await db.count_tutor_groups_and_students(tutor.id) == (2, 3)
+    assert await db.count_tutor_groups_and_students(tutor.id) == (2, 3, 0)
 
     assert await db.delete_group(g1.id) is True
-    assert await db.count_tutor_groups_and_students(tutor.id) == (1, 1)
+    assert await db.count_tutor_groups_and_students(tutor.id) == (1, 1, 0)
     assert await db.get_student_by_telegram_id(1) is None
 
     assert await db.delete_tutor(tutor.id) is True
-    assert await db.count_tutor_groups_and_students(tutor.id) == (0, 0)
+    assert await db.count_tutor_groups_and_students(tutor.id) == (0, 0, 0)
     assert await db.get_group(g2.id) is None
     assert await db.get_student_by_telegram_id(3) is None
     # unrelated tutor untouched
-    assert await db.count_tutor_groups_and_students(keep.id) == (1, 1)
+    assert await db.count_tutor_groups_and_students(keep.id) == (1, 1, 0)
     assert len(await db.list_students()) == 1
 
 
@@ -304,7 +304,7 @@ async def test_update_student_moves_the_row_to_another_tutor_and_group(db: Datab
     assert edited.group_id == g2.id and edited.group_name == "G2"
     assert await db.count_group_students(g1.id) == 0
     assert await db.count_group_students(g2.id) == 1
-    assert await db.count_tutor_groups_and_students(first.id) == (1, 0)
+    assert await db.count_tutor_groups_and_students(first.id) == (1, 0, 0)
 
 
 async def test_update_student_rejects_bad_input_and_missing_rows(db: Database) -> None:

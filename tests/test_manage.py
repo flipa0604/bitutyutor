@@ -104,7 +104,7 @@ async def test_tutor_reaches_students_from_panel_command_and_group_card(h: Harne
     picker = h.last_shown(TUTOR)
     assert picker.text == texts.STUDENT_PICK_GROUP
     assert inline_buttons(picker.reply_markup) == {
-        f"stu:svs:{group.id}:t:basic": "DI-21 — 1 ta talaba",
+        f"stu:svs:{group.id}:t:basic": "DI-21 — 📋 1 ta · 🗂 0 ta",
         "tut:panel:0:": texts.BTN_BACK,
     }
 
@@ -513,7 +513,7 @@ async def test_superadmin_manages_any_students_through_the_tutor_card(h: Harness
     groups = h.last_shown(SUPERADMIN)
     assert groups.text == texts.TUTOR_GROUP_LIST_TITLE.format(name="Karimov Aziz", n=1)
     assert inline_buttons(groups.reply_markup) == {
-        f"stu:svs:{group.id}:a:basic": "DI-21 — 1 ta talaba",
+        f"stu:svs:{group.id}:a:basic": "DI-21 — 📋 1 ta · 🗂 0 ta",
         f"adm:view:{tutor.id}": texts.BTN_BACK,
     }
     await h.feed(callback_update(admin, f"adm:groups:{idle.id}"))

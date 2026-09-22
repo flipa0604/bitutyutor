@@ -227,8 +227,10 @@ TUTOR_DELETED = "🗑 Tyutor o'chirildi."
 TUTOR_CARD = (
     "👨‍🏫 <b>Tyutor:</b> {name}\n"
     "🆔 Telegram ID: <code>{telegram_id}</code>\n"
+    "📞 Telefon: {phone}\n"
     "👥 Guruhlar: {groups} ta\n"
-    "🎓 Talabalar: {students} ta\n"
+    "📋 Asosiy anketa: {students} ta talaba\n"
+    "🗂 To'liq anketa: {profiles} ta talaba\n"
     "🕒 Qo'shilgan: {created_at}"
 )
 TUTOR_GROUP_LIST_TITLE = "👥 <b>{name}</b> — guruhlari ({n} ta). Guruhni tanlang:"
@@ -297,12 +299,14 @@ def tutor_button_label(tutor: Tutor) -> str:
     return f"{tutor.name} (id: {tutor.telegram_id})"
 
 
-def tutor_card(tutor: Tutor, groups: int, students: int) -> str:
+def tutor_card(tutor: Tutor, groups: int, students: int, profiles: int) -> str:
     return TUTOR_CARD.format(
         name=hesc(tutor.name),
         telegram_id=tutor.telegram_id,
+        phone=hesc(tutor.phone) if tutor.phone else "—",
         groups=groups,
         students=students,
+        profiles=profiles,
         created_at=hesc(tutor.created_at),
     )
 
@@ -323,10 +327,16 @@ GROUP_SAVED = "✅ Guruh qo'shildi."
 GROUP_RENAMED = "✅ Guruh nomi o'zgartirildi."
 GROUP_NOT_FOUND = "❗️ Guruh topilmadi (o'chirilgan bo'lishi mumkin)."
 GROUP_DELETE_CONFIRM = (
-    "⚠️ <b>{name}</b> guruhini o'chirmoqchimisiz?\n\nGuruhdagi {count} ta talaba ma'lumoti ham o'chiriladi."
+    "⚠️ <b>{name}</b> guruhini o'chirmoqchimisiz?\n\n"
+    "Guruhdagi 📋 {count} ta asosiy va 🗂 {profiles} ta to'liq anketa ma'lumoti ham o'chiriladi."
 )
 GROUP_DELETED = "🗑 Guruh o'chirildi."
-GROUP_CARD = "👥 <b>Guruh:</b> {name}\n🎓 Talabalar: {count} ta\n🕒 Yaratilgan: {created_at}"
+GROUP_CARD = (
+    "👥 <b>Guruh:</b> {name}\n"
+    "📋 Asosiy anketa: {count} ta talaba\n"
+    "🗂 To'liq anketa: {profiles} ta talaba\n"
+    "🕒 Yaratilgan: {created_at}"
+)
 EXCEL_MENU = (
     "📊 Qaysi ma'lumotni yuklab olasiz?\n\n"
     "Yuqoridagi uchtasi — 📋 asosiy anketa, pastdagilar — 🗂 to'liq anketa."
@@ -336,8 +346,9 @@ EXCEL_PICK_RESIDENCE = "🏠 Turar joy turini tanlang:"
 EXCEL_CAPTION = "📊 {title}\n🎓 Talabalar: {count} ta"
 
 
-def group_button_label(name: str, count: int) -> str:
-    return f"{name} — {count} ta talaba"
+def group_button_label(name: str, students: int, profiles: int) -> str:
+    """Both questionnaires are counted apart: a group can be empty in one and full in the other."""
+    return f"{name} — 📋 {students} ta · 🗂 {profiles} ta"
 
 
 # ------------------------------------------------------- broadcast (superadmin)
@@ -404,7 +415,7 @@ SURVEY_ABOUT: dict[str, str] = {
 SURVEY_PICK = (
     "📝 <b>Qaysi anketani to'ldirasiz?</b>\n\n"
     "{lines}\n\n"
-    "Ikkalasi bir-biridan mustaqil: birini to'ldirib, ikkinchisini keyin ham to'ldirishingiz mumkin."
+    "Ikkalasi bir-biridan <b>mustaqil</b>: xohlaganini to'ldirasiz, biri uchun ikkinchisi shart emas."
 )
 SURVEY_PICK_EDIT = "✏️ <b>Qaysi anketani ko'rasiz yoki o'zgartirasiz?</b>\n\n{lines}"
 SURVEY_LINE_DONE = "✅ <b>{label}</b> — to'ldirilgan ({at})"

@@ -620,3 +620,69 @@ async def test_deleting_one_questionnaire_leaves_the_other_alone(h: Harness) -> 
     assert await h.db.get_student_by_telegram_id(STUDENT) is None
     assert await h.db.get_full_profile_by_telegram_id(STUDENT) is not None  # untouched
     assert_all_callbacks_answered(h)
+
+
+# ================================================== the two are independent
+
+
+async def test_a_student_may_fill_only_the_full_survey(h: Harness) -> None:
+    """Nobody has to fill the basic questionnaire first: every screen counts the two apart."""
+    tutor, group = await seed(h)
+    student = make_user(STUDENT, username="vali")
+
+    await fill_full(h, student, tutor.id, group.id)
+    assert await h.db.get_full_profile_by_telegram_id(STUDENT) is not None
+    assert await h.db.get_student_by_telegram_id(STUDENT) is None  # never touched
+
+    tutor_user = make_user(TUTOR)
+    h.clear()
+    await h.feed(text_update(tutor_user, "/groups"))
+    assert "DI-21 — 📋 0 ta · 🗂 1 ta" in inline_buttons(h.last_message(TUTOR).reply_markup).values()
+
+    await h.feed(callback_update(tutor_user, f"tut:view:{group.id}:"))
+    card = h.last_shown(TUTOR).text
+    assert "📋 Asosiy anketa: 0 ta talaba" in card and "🗂 To'liq anketa: 1 ta talaba" in card
+
+    await h.feed(callback_update(tutor_user, f"stu:svs:{group.id}:t:basic"))
+    chooser = inline_buttons(h.last_shown(TUTOR).reply_markup)
+    assert chooser[f"stu:list:{group.id}:t:basic"].endswith("0 ta")
+    assert chooser[f"stu:list:{group.id}:t:full"].endswith("1 ta")
+
+    # the superadmin's tutor card and the user list see them as well
+    admin = make_user(SUPERADMIN)
+    await h.feed(text_update(admin, "/tutors"), callback_update(admin, f"adm:view:{tutor.id}"))
+    tutor_card = h.last_shown(SUPERADMIN).text
+    assert "📋 Asosiy anketa: 0 ta talaba" in tutor_card and "🗂 To'liq anketa: 1 ta talaba" in tutor_card
+    await h.feed(text_update(admin, "/users"))
+    assert "✅ ro'yxatdan o'tgan: <b>1</b> ta" in h.last_message(SUPERADMIN).text
+
+    # ... and the basic questionnaire is still offered to that same student
+    await h.feed(text_update(student, "/start"))
+    assert inline_buttons(h.last_message(STUDENT).reply_markup) == {
+        "sv:fill:basic": f"🕗 {texts.BTN_SURVEY_BASIC}",
+        "sv:open:full": f"✅ {texts.BTN_SURVEY_FULL}",
+    }
+    assert_all_callbacks_answered(h)
+
+
+async def test_filling_the_basic_one_does_not_touch_the_full_one(h: Harness) -> None:
+    from tests.test_flows import RegInput, register
+
+    tutor, group = await seed(h)
+    student = make_user(STUDENT, username="vali")
+    await register(h, student, tutor.id, group.id, RegInput(full_name="Zokirov Vali"))
+    assert await h.db.get_full_profile_by_telegram_id(STUDENT) is None
+    assert await h.db.list_full_profiles(tutor_id=tutor.id) == []
+
+    # the same person can add the full questionnaire afterwards, in any order
+    await fill_full(h, student, tutor.id, group.id, answers={"full_name": "Zokirov Vali Aliyevich"})
+    basic = await h.db.get_student_by_telegram_id(STUDENT)
+    profile = await h.db.get_full_profile_by_telegram_id(STUDENT)
+    assert basic is not None and basic.full_name == "Zokirov Vali"  # untouched by the full survey
+    assert profile is not None and profile.full_name == "Zokirov Vali Aliyevich"
+
+    tutor_user = make_user(TUTOR)
+    h.clear()
+    await h.feed(text_update(tutor_user, "/groups"))
+    assert "DI-21 — 📋 1 ta · 🗂 1 ta" in inline_buttons(h.last_message(TUTOR).reply_markup).values()
+    assert_all_callbacks_answered(h)

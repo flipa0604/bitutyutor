@@ -95,8 +95,8 @@ async def _users_page(db: Database, page: int) -> tuple[str, InlineKeyboardMarku
 
 
 async def _tutor_card(db: Database, tutor: Tutor) -> str:
-    groups, students = await db.count_tutor_groups_and_students(tutor.id)
-    return texts.tutor_card(tutor, groups, students)
+    groups, students, profiles = await db.count_tutor_groups_and_students(tutor.id)
+    return texts.tutor_card(tutor, groups, students, profiles)
 
 
 async def _load_tutor(callback: CallbackQuery, db: Database, tutor_id: int) -> Tutor | None:
@@ -450,12 +450,12 @@ async def cb_delete(callback: CallbackQuery, callback_data: AdminCb, db: Databas
     tutor = await _load_tutor(callback, db, callback_data.tutor_id)
     if tutor is None:
         return
-    groups, students = await db.count_tutor_groups_and_students(tutor.id)
+    groups, students, profiles = await db.count_tutor_groups_and_students(tutor.id)
     await callback.answer()
     await edit_or_send(
         callback,
         bot,
-        texts.TUTOR_DELETE_CONFIRM.format(name=hesc(tutor.name), groups=groups, students=students),
+        texts.TUTOR_DELETE_CONFIRM.format(name=hesc(tutor.name), groups=groups, students=students + profiles),
         admin_confirm_delete_kb(tutor.id),
     )
 

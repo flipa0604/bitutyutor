@@ -875,7 +875,7 @@ async def test_tutor_add_group_and_export_group_excel(h: Harness) -> None:
     await h.feed(callback_update(tutor_user, by_group))
     pick_kb = inline_buttons(h.last_shown(TUTOR).reply_markup)
     group_button = next(d for d, t in pick_kb.items() if t.startswith("DI-21"))
-    assert "0 ta talaba" in pick_kb[group_button]
+    assert "📋 0 ta" in pick_kb[group_button]
     await h.feed(callback_update(tutor_user, group_button))
     assert h.last_text(TUTOR) == texts.NO_DATA and not h.documents()
 
@@ -1646,9 +1646,9 @@ async def test_tutor_delete_group_cascades(h: Harness) -> None:
     await h.feed(text_update(tutor_user, "/delete_group"))
     kb = inline_buttons(h.last_message(TUTOR).reply_markup)
     pick = next(d for d, t in kb.items() if t.startswith("DI-21"))
-    assert kb[pick] == "DI-21 — 1 ta talaba"
+    assert kb[pick] == "DI-21 — 📋 1 ta · 🗂 0 ta"
     await h.feed(callback_update(tutor_user, pick))
-    assert "Guruhdagi 1 ta talaba ma'lumoti ham o'chiriladi" in h.last_text(TUTOR)
+    assert "📋 1 ta asosiy va 🗂 0 ta to'liq anketa" in h.last_text(TUTOR)
     confirm_kb = inline_buttons(h.last_shown(TUTOR).reply_markup)
     yes = next(d for d, t in confirm_kb.items() if t == texts.BTN_YES_DELETE)
     await h.feed(callback_update(tutor_user, yes))

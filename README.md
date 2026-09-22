@@ -132,9 +132,13 @@ Tyutor faqat o'z talabalarini boshqara oladi; superadmin — hammanikini (tyutor
 
 ### Talaba (`/start`)
 
-`/start` bosilganda avval **qaysi anketa** to'ldirilishi so'raladi. Ikkala anketa bir-biridan mustaqil:
-alohida bazada saqlanadi, alohida tahrirlanadi va alohida Excelga chiqadi. Tyutorlar va guruhlar esa
-ikkalasi uchun **umumiy**.
+`/start` bosilganda avval **qaysi anketa** to'ldirilishi so'raladi. Ikkala anketa bir-biridan **mustaqil**:
+biri uchun ikkinchisi **shart emas** — talaba to'g'ridan-to'g'ri to'liq anketani to'ldirsa ham bo'ladi,
+faqat asosiysini to'ldirsa ham. Har biri alohida bazada saqlanadi, alohida tahrirlanadi, alohida
+Excelga chiqadi va alohida o'chiriladi. Tyutorlar va guruhlar esa ikkalasi uchun **umumiy**.
+
+Shuning uchun tyutorga ko'rinadigan barcha sanoqlar ham alohida: guruh tugmasida `📋 3 ta · 🗂 50 ta`,
+guruh va tyutor kartasida ikkita qator, talabalar ro'yxatida esa avval qaysi anketa ekani tanlanadi.
 
 #### 📋 Asosiy anketa (8 ta savol)
 

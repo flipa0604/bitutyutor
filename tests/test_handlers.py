@@ -448,7 +448,7 @@ async def test_tutor_rename_and_delete_group(dp: Dispatcher, bot: Bot, session: 
     assert renamed is not None and renamed.name == "G1-yangi"
 
     await feed(dp, bot, text_update(user, "/delete_group"), callback_update(user, f"tut:delete:{g2.id}:"))
-    assert "0 ta talaba" in session.last_text(TUTOR_TG)
+    assert "📋 0 ta asosiy" in session.last_text(TUTOR_TG)
     await feed(dp, bot, callback_update(user, f"tut:confirm_delete:{g2.id}:"))
     assert await db.get_group(g2.id) is None
     assert texts.GROUP_DELETED in session.last_text(TUTOR_TG)
