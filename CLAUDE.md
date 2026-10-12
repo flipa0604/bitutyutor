@@ -11,10 +11,11 @@ va issue/PR ga **hech qachon** tushmaydi:
 | `BOT_TOKEN`, `SUPERADMIN_IDS` va boshqa haqiqiy qiymatlar | faqat serverdagi `.env` (chmod 600) |
 | `data/`, `*.db`, `*.db-journal` — talabalar bazasi | faqat serverda |
 | `*.xlsx` — eksport qilingan ro'yxatlar | faqat yuklab olgan odamda |
-| Server paroli, SSH kaliti, tokenlar | hech qayerda saqlanmaydi — har safar so'raladi |
+| Server paroli, tokenlar | hech qayerda saqlanmaydi — kerak bo'lsa foydalanuvchidan so'raladi |
+| SSH deploy kalitining **maxfiy** qismi | faqat ishlab chiquvchi kompyuterida (`~/.ssh/bitutyutor_deploy`) — repoga, chatga, boshqa joyga ko'chirilmaydi |
 
-`.env.example` da faqat **namunaviy** qiymatlar turadi. Server IP va foydalanuvchi nomi
-`DEPLOY.md` da bo'lishi mumkin, **parol — yo'q**.
+`.env.example` da faqat **namunaviy** qiymatlar turadi. Server IP, foydalanuvchi nomi va kalit
+fayli **yo'li** `DEPLOY.md` / shu faylda bo'lishi mumkin, **parol va kalitning o'zi — yo'q**.
 
 Hammasi `.gitignore` da ro'yxatga olingan. Yangi turdagi maxfiy fayl paydo bo'lsa: avval
 `.gitignore` ga qo'shing, keyin faylni yarating. Har `git add -A` dan keyin
@@ -39,3 +40,34 @@ Hammasi `.gitignore` da ro'yxatga olingan. Yangi turdagi maxfiy fayl paydo bo'ls
   (`asyncio.Lock` reentrant emas).
 - Foydalanuvchiga ko'rinadigan barcha matnlar `bot/texts.py` da, o'zbek (lotin) tilida.
 - Deploy: `DEPLOY.md`. Serverda yangilash — `bash deploy/update.sh`.
+
+## 4. Serverga kirish va deploy
+
+Server: `flipa@172.31.202.203` (Ubuntu 22.04, Python 3.10.12), loyiha `~/apps/bitutyutor`,
+systemd xizmati `bitutyutor`, baza `~/apps/bitutyutor/data/bot.db`.
+
+**Kirish — doim SSH kalit bilan, parolsiz** (kalit shu kompyuterda: `C:\Users\user\.ssh\bitutyutor_deploy`,
+ochiq qismi serverdagi `~/.ssh/authorized_keys` da, izohi `bitutyutor-deploy`):
+
+```bash
+ssh -i ~/.ssh/bitutyutor_deploy -o IdentitiesOnly=yes -o BatchMode=yes flipa@172.31.202.203 '<buyruq>'
+```
+
+- `sudo` faqat bitta buyruqqa parolsiz: `sudo systemctl restart bitutyutor`
+  (`/etc/sudoers.d/bitutyutor-deploy`). Loglar sudo'siz o'qiladi: `journalctl -u bitutyutor`
+  (`flipa` — `systemd-journal` guruhida). Boshqa `sudo` kerak bo'lsa — parol foydalanuvchidan so'raladi.
+- Kalit ishlamasa (yo'qolgan / almashtirilgan): yangisini `ssh-keygen -t ed25519 -N "" -C bitutyutor-deploy
+  -f ~/.ssh/bitutyutor_deploy` bilan yaratib, `DEPLOY.md` → "SSH kalit" bo'limidagi buyruqlarni
+  foydalanuvchiga serverda bajartiring. Parol bilan kirish (PuTTY `plink`) — faqat zaxira yo'l.
+
+**Deploy tartibi** — bitta SSH sessiyada, skript stdin orqali (`... 'bash -s' < skript.sh`), butun skript
+`main() { ... }; main < /dev/null` ichida (biror buyruq qolgan skriptni stdin'dan "yeb" qo'ymasin):
+
+1. Joriy ishga tushish jurnalida (`journalctl _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID
+   --value bitutyutor)`) boshlangan-u tugamagan **hammaga xabar** (`broadcasts … parts to` /
+   `Broadcast by … finished`) yoki **🔄 tekshiruv** (`checks … users for blocks` / `Check by … finished`)
+   bo'lsa — **restart qilinmaydi**: ular bot jarayonining ichida ketadi.
+2. Bazadan nusxa: `~/backups/bitutyutor-<sana-vaqt>.db` (Python `sqlite3` `backup()` + `integrity_check`).
+3. `git pull --ff-only` → serverdagi venv'da `pip install pytest pytest-asyncio` va
+   `python -m pytest -q -p no:cacheprovider` (Python 3.10) — testlar yiqilsa, restart **yo'q**.
+4. `source deploy/update.sh` (restart) → `journalctl -u bitutyutor -n 12` — `Start polling` bor, xato yo'q.

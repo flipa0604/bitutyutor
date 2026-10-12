@@ -65,6 +65,34 @@ cd ~/apps/bitutyutor && bash deploy/update.sh
 
 `update.sh` — `git pull` → bog'liqliklarni tekshirish → `systemctl restart` → holatni ko'rsatish.
 
+## SSH kalit (parolsiz deploy)
+
+Deploy qiluvchi kompyuterda kalit: `~/.ssh/bitutyutor_deploy` (maxfiy qismi faqat o'sha kompyuterda
+qoladi). Yangi kalit kerak bo'lsa:
+
+```bash
+ssh-keygen -t ed25519 -N "" -C bitutyutor-deploy -f ~/.ssh/bitutyutor_deploy
+cat ~/.ssh/bitutyutor_deploy.pub       # shu qatorni serverga qo'yasiz
+```
+
+Serverda `flipa` bo'lib bir marta bajariladi (`sudo` parolni bir marta so'raydi):
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo '<ochiq kalit qatori>' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+# faqat botni qayta ishga tushirish parolsiz (boshqa hech narsa emas); visudo avval tekshiradi
+echo 'flipa ALL=(root) NOPASSWD: /usr/bin/systemctl restart bitutyutor' > /tmp/btd
+sudo visudo -cf /tmp/btd && sudo install -m 440 -o root -g root /tmp/btd /etc/sudoers.d/bitutyutor-deploy; rm -f /tmp/btd
+# loglarni sudo'siz o'qish
+sudo usermod -aG systemd-journal flipa
+```
+
+Tekshirish (deploy qiluvchi kompyuterdan):
+
+```bash
+ssh -i ~/.ssh/bitutyutor_deploy -o IdentitiesOnly=yes flipa@172.31.202.203 'sudo -n -l /usr/bin/systemctl restart bitutyutor'
+```
+
 ## Ma'lumotlar bazasi (backup)
 
 Baza — bitta SQLite fayl: `~/apps/bitutyutor/data/bot.db`. `.gitignore` da, ya'ni `git pull`
