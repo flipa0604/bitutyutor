@@ -61,6 +61,13 @@ class UsersCb(CallbackData, prefix="usr"):
     page: int = 0
 
 
+class BlkCb(CallbackData, prefix="blk"):
+    """The blocked-users list, packed as ``blk:{action}:{page}`` (page is 0-based; 0 for the check)."""
+
+    action: str
+    page: int = 0
+
+
 class RegCb(CallbackData, prefix="reg"):
     """Student registration callbacks, packed as ``reg:{action}:{id}`` (e.g. ``reg:tutor:5``)."""
 
@@ -139,6 +146,11 @@ ADM_EXCEL_TUTOR = "excel_tutor"
 ADM_BROADCAST = "broadcast"
 ADM_EXCEL_ALL_FULL = "excel_all_f"  # full survey, every tutor
 ADM_EXCEL_TUTOR_FULL = "excel_tut_f"  # full survey, one tutor
+ADM_FIND = "find"  # look a user up (``bot.handlers.blocked``)
+
+# blocked-users list actions
+BLK_LIST = "list"  # one page of the list
+BLK_CHECK = "check"  # probe every user once
 
 # tutor actions
 TUT_PANEL = "panel"
@@ -275,11 +287,13 @@ def admin_panel_kb() -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_ADMIN_ADD_TUTOR, callback_data=AdminCb(action=ADM_ADD))
     b.button(text=texts.BTN_ADMIN_USERS, callback_data=UsersCb(page=0))
     b.button(text=texts.BTN_ADMIN_TEST_USERS, callback_data=TestCb(action=TST_LIST))
+    b.button(text=texts.BTN_ADMIN_FIND, callback_data=AdminCb(action=ADM_FIND))
+    b.button(text=texts.BTN_ADMIN_BLOCKED, callback_data=BlkCb(action=BLK_LIST))
     b.button(text=texts.BTN_ADMIN_EXCEL_ALL, callback_data=AdminCb(action=ADM_EXCEL_ALL))
     b.button(text=texts.BTN_ADMIN_EXCEL_PICK, callback_data=AdminCb(action=ADM_EXCEL_PICK))
     b.button(text=texts.BTN_ADMIN_EXCEL_FULL, callback_data=AdminCb(action=ADM_EXCEL_ALL_FULL))
     b.button(text=texts.BTN_ADMIN_BROADCAST, callback_data=AdminCb(action=ADM_BROADCAST))
-    b.adjust(2, 2, 1, 1, 1, 1)
+    b.adjust(2, 2, 2, 1, 1, 1, 1)
     return b.as_markup()
 
 
@@ -304,6 +318,21 @@ def admin_users_kb(page: int, pages: int) -> InlineKeyboardMarkup:
         arrows.append(InlineKeyboardButton(text=texts.BTN_NEXT, callback_data=UsersCb(page=page + 1).pack()))
     if arrows:
         b.row(*arrows)
+    b.row(_back_button(texts.BTN_BACK, AdminCb(action=ADM_PANEL).pack()))
+    return b.as_markup()
+
+
+def admin_blocked_kb(page: int, pages: int) -> InlineKeyboardMarkup:
+    """Prev/next paging of the blocked list (arrows only where there is a page), 🔄 check and ⬅️ back."""
+    b = InlineKeyboardBuilder()
+    arrows = []
+    if page > 0:
+        arrows.append(InlineKeyboardButton(text=texts.BTN_PREV, callback_data=BlkCb(action=BLK_LIST, page=page - 1).pack()))
+    if page + 1 < pages:
+        arrows.append(InlineKeyboardButton(text=texts.BTN_NEXT, callback_data=BlkCb(action=BLK_LIST, page=page + 1).pack()))
+    if arrows:
+        b.row(*arrows)
+    b.row(InlineKeyboardButton(text=texts.BTN_BLK_CHECK, callback_data=BlkCb(action=BLK_CHECK).pack()))
     b.row(_back_button(texts.BTN_BACK, AdminCb(action=ADM_PANEL).pack()))
     return b.as_markup()
 

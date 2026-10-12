@@ -91,7 +91,8 @@ async def _users_page(db: Database, page: int) -> tuple[str, InlineKeyboardMarku
     page = min(max(page, 0), pages - 1)
     offset = page * USERS_PAGE_SIZE
     users = await db.list_users(USERS_PAGE_SIZE, offset)
-    return texts.users_page(users, total, registered, page, pages, offset), admin_users_kb(page, pages)
+    blocked = await db.count_blocked()
+    return texts.users_page(users, total, registered, page, pages, offset, blocked), admin_users_kb(page, pages)
 
 
 async def _tutor_card(db: Database, tutor: Tutor) -> str:
@@ -123,10 +124,10 @@ def _forwarded_user_name(message: Message) -> str:
     return ""
 
 
-def _telegram_id_from_message(message: Message) -> tuple[int | None, bool]:
+def telegram_id_from_message(message: Message) -> tuple[int | None, bool]:
     """Extract a Telegram user ID from typed text or a forwarded message.
 
-    Returns ``(user_id, forwarded_but_hidden)``.
+    Returns ``(user_id, forwarded_but_hidden)``. Also used by the user search (``bot.handlers.blocked``).
     """
     origin = message.forward_origin
     if isinstance(origin, MessageOriginUser):
@@ -173,7 +174,7 @@ async def cb_add_test_user(callback: CallbackQuery, state: FSMContext, bot: Bot)
 async def add_test_user_id(
     message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
 ) -> None:
-    telegram_id, hidden = _telegram_id_from_message(message)
+    telegram_id, hidden = telegram_id_from_message(message)
     if hidden:
         await message.answer(texts.TUTOR_TG_HIDDEN, reply_markup=cancel_kb())
         return
@@ -292,7 +293,7 @@ async def add_tutor_name(message: Message, state: FSMContext) -> None:
 
 
 async def add_tutor_telegram_id(message: Message, state: FSMContext, db: Database) -> None:
-    telegram_id, hidden = _telegram_id_from_message(message)
+    telegram_id, hidden = telegram_id_from_message(message)
     if hidden:
         await message.answer(texts.TUTOR_TG_HIDDEN, reply_markup=cancel_kb())
         return
@@ -411,7 +412,7 @@ async def edit_tutor_name(message: Message, state: FSMContext, db: Database, set
 async def edit_tutor_telegram_id(
     message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot
 ) -> None:
-    telegram_id, hidden = _telegram_id_from_message(message)
+    telegram_id, hidden = telegram_id_from_message(message)
     if hidden:
         await message.answer(texts.TUTOR_TG_HIDDEN, reply_markup=cancel_kb())
         return

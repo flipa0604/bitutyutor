@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from aiogram import Bot
@@ -67,16 +67,27 @@ def part_from_message(message: Message) -> Part | None:
 
 @dataclass(slots=True)
 class Report:
-    total: int
-    sent: int = 0
-    blocked: int = 0
-    failed: int = 0
+    """What became of a broadcast. Who got it and who has blocked the bot are kept by id, so the
+    blocked list can be brought up to date afterwards; the other failures are only counted."""
 
-    def count(self, outcome: str) -> None:
+    total: int
+    failed: int = 0
+    sent_ids: list[int] = field(default_factory=list)
+    blocked_ids: list[int] = field(default_factory=list)
+
+    @property
+    def sent(self) -> int:
+        return len(self.sent_ids)
+
+    @property
+    def blocked(self) -> int:
+        return len(self.blocked_ids)
+
+    def add(self, chat_id: int, outcome: str) -> None:
         if outcome == SENT:
-            self.sent += 1
+            self.sent_ids.append(chat_id)
         elif outcome == BLOCKED:
-            self.blocked += 1
+            self.blocked_ids.append(chat_id)
         else:
             self.failed += 1
 
@@ -111,7 +122,7 @@ async def run_broadcast(
     """Deliver ``parts`` to every recipient, pausing between them, reporting progress now and then."""
     report = Report(total=len(recipients))
     for done, chat_id in enumerate(recipients, start=1):
-        report.count(await copy_parts(bot, from_chat_id, chat_id, parts))
+        report.add(chat_id, await copy_parts(bot, from_chat_id, chat_id, parts))
         if on_progress is not None and done % PROGRESS_EVERY == 0 and done < len(recipients):
             await on_progress(done, len(recipients))
         if SEND_DELAY and done < len(recipients):

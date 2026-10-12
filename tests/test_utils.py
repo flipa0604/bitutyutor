@@ -7,6 +7,7 @@ import pytest
 from bot.texts import parse_residence, residence_label
 from bot.utils import (
     clean_text,
+    clean_user_query,
     hesc,
     is_valid_length,
     is_valid_name,
@@ -110,6 +111,24 @@ def test_is_valid_length_uses_cleaned_text() -> None:
 )
 def test_parse_telegram_id(text: str | None, expected: int | None) -> None:
     assert parse_telegram_id(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("@vali", "vali"),
+        ("  vali_01 ", "vali_01"),
+        ("https://t.me/vali", "vali"),
+        ("t.me/@vali", "vali"),
+        ("HTTP://WWW.Telegram.me/Vali", "Vali"),
+        ("Aliyev   Vali", "Aliyev Vali"),
+        ("4004", "4004"),
+        ("@", ""),
+        (None, ""),
+    ],
+)
+def test_clean_user_query(text: str | None, expected: str) -> None:
+    assert clean_user_query(text) == expected
 
 
 def test_hesc_escapes_html_but_keeps_apostrophes() -> None:

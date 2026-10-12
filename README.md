@@ -81,7 +81,21 @@ sudo systemctl restart bitutyutor
 - `/edit_tutor` — tyutor ismini yoki Telegram ID sini o'zgartirish
 - `/delete_tutor` — tyutorni o'chirish (uning guruhlari va talabalari ham o'chiriladi, oldin tasdiq so'raladi)
 - `/users` — botni ishga tushirgan **barcha** foydalanuvchilar: ✅ ro'yxatdan o'tganlar va 🕗 o'tmaganlar,
-  har birida ism, username va Telegram ID; 20 tadan sahifalanadi
+  har birida ism, username va Telegram ID; 20 tadan sahifalanadi. Botni bloklaganlar 🚫 bilan belgilanadi,
+  sarlavhada ularning soni ham turadi
+- `/blocked` yoki 🚫 **Bloklaganlar** — botni bloklagan (yoki Telegram akkauntini o'chirgan) foydalanuvchilar:
+  ism, username, ID, guruhi va qachon aniqlangani; 20 tadan sahifalanadi. Bot buni o'zi kuzatadi:
+  foydalanuvchi botni bloklagan **zahoti** (Telegram'ning `my_chat_member` xabari), xabar yuborilganda
+  (📢 hammaga xabar, talabaga ✉️ xabar) yetib bormasa — belgilanadi; qayta `/start` bossa, blokdan chiqarsa
+  yoki xabar yetib borsa — belgi olib tashlanadi. 🔄 **Hammasini tekshirish** — barcha foydalanuvchilarni
+  bittalab tekshiradi (Telegram'ga "yozmoqda…" so'rovi; xabar yuborilmaydi, ~2200 kishi uchun bir necha
+  daqiqa) va natija hisobotini beradi. Bu funksiya qo'shilishidan **oldin** bloklaganlarni topish uchun
+  uni bir marta bosish kerak
+- `/find` yoki 🔍 **Foydalanuvchi qidirish** — username (`vali`, `@vali` yoki `t.me/vali`), Telegram ID,
+  Telegram ismi yoki anketadagi F.I.SH bo'yicha qidirish; foydalanuvchining xabarini *forward* qilsa ham
+  bo'ladi. `/find vali` darhol qidiradi. Har bir topilgan foydalanuvchi **shu zahoti** tekshiriladi va
+  javobda aniq yoziladi: 🚫 botni bloklagan (qachondan beri) yoki ✅ bloklamagan; shuningdek anketalari,
+  guruhi, tyutori va `/start` sanalari. Bir martada 10 tagacha natija
 - `/test_users` — 🧪 test userlar ro'yxati: qo'shish (ID kiritib yoki xabarini forward qilib) va
   o'chirish. Faqat shu ro'yxatdagilar qayta ro'yxatdan o'ta oladi (pastga qarang)
 - 📊 Excel (barcha tyutorlar) — bitta faylda `Barchasi` varag'i + har bir tyutor uchun alohida varaq
@@ -229,8 +243,10 @@ bot/states.py           # FSM holatlari
 bot/filters.py          # IsSuperAdmin, IsTutor filtrlari
 bot/utils.py            # telefon/ism tekshiruvi, HTML escape
 bot/excel.py            # Excel fayllarini yasash
+bot/broadcast.py        # hammaga xabarni yetkazish (copyMessage)
+bot/reach.py            # foydalanuvchi botni bloklaganmi — tekshirish
 bot/commands.py         # bot buyruqlari menyusi
-bot/handlers/           # common, admin, tutor, student handler'lari
+bot/handlers/           # common, admin, broadcast, blocked, tutor, student, full, manage handler'lari
 tests/                  # pytest testlari
 deploy/                 # systemd unit + install.sh / update.sh
 ```

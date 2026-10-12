@@ -246,18 +246,26 @@ def _message_body(text: str) -> str | None:
     return value if 0 < len(value) <= MESSAGE_MAX_LEN else None
 
 
-async def _deliver(bot: Bot, chat_id: int, sender: str, text: str, removed_from: str | None = None) -> str:
-    """Send ``text`` to the student under a header naming the sender. Never raises."""
+async def _deliver(
+    bot: Bot, db: Database, chat_id: int, sender: str, text: str, removed_from: str | None = None
+) -> str:
+    """Send ``text`` to the student under a header naming the sender. Never raises a Telegram error.
+
+    The outcome also keeps the blocked list current: a refusal marks the student as having blocked
+    the bot, a delivery clears such a mark; any other failure leaves it as it was.
+    """
     note = texts.MESSAGE_REMOVED_LINE.format(group=hesc(removed_from)) if removed_from else ""
     body = texts.MESSAGE_TO_STUDENT.format(sender=sender, note=note, text=hesc(text))
     try:
         await bot.send_message(chat_id, body)
     except TelegramForbiddenError as exc:
         log.warning("Message to %s not delivered (blocked): %s", chat_id, exc)
+        await db.set_blocked([chat_id], True)
         return BLOCKED
     except TelegramAPIError as exc:
         log.warning("Message to %s failed: %s", chat_id, exc)
         return FAILED
+    await db.set_blocked([chat_id], False)
     return SENT
 
 
@@ -384,7 +392,7 @@ async def message_text(
         await message.answer(refusal, reply_markup=await _menu(db, settings, user_id))
         return
     mode = actor.mode_for(student.tutor_id)
-    outcome = await _deliver(bot, student.telegram_id, actor.sender_line(student.tutor_id), text)
+    outcome = await _deliver(bot, db, student.telegram_id, actor.sender_line(student.tutor_id), text)
     await state.clear()
     log.info("%s %s messaged student %s (tg=%s): %s", _role(mode), user_id, student.id, student.telegram_id, outcome)
     result = {
@@ -570,7 +578,7 @@ async def farewell_text(
     # checked at deletion time, and the farewell belongs to that deletion even if the student has
     # already registered again somewhere (the note about the old group stays true).
     sender = str(data.get("sender") or texts.MESSAGE_SENDER_ADMIN)
-    outcome = await _deliver(bot, recipient, sender, text, removed_from=str(data.get("farewell_group") or ""))
+    outcome = await _deliver(bot, db, recipient, sender, text, removed_from=str(data.get("farewell_group") or ""))
     await state.clear()
     log.info("User %s messaged deleted student tg=%s: %s", user_id, recipient, outcome)
     name = hesc(str(data.get("farewell_name") or ""))

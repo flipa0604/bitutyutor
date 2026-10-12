@@ -18,6 +18,15 @@ class AdminTestUserAdd(StatesGroup):
     telegram_id = State()
 
 
+class AdminUserSearch(StatesGroup):
+    """A superadmin looking users up by username, Telegram ID or name (``bot.handlers.blocked``).
+
+    The state outlives each answer, so the next query can be typed straight away.
+    """
+
+    query = State()
+
+
 class Broadcast(StatesGroup):
     """A superadmin composing a message to every bot user (``bot.handlers.broadcast``).
 

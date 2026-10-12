@@ -76,6 +76,19 @@ def parse_telegram_id(text: str | None) -> int | None:
     return number if 0 < number <= MAX_TELEGRAM_ID else None
 
 
+_TME_PREFIX_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:t|telegram)\.me/", re.IGNORECASE)
+
+
+def clean_user_query(text: str | None) -> str:
+    """What an admin typed to find someone, reduced to the searchable part.
+
+    Whitespace is collapsed and a leading ``@`` or ``t.me/`` link prefix dropped, so ``@vali``,
+    ``https://t.me/vali`` and ``vali`` are the same query.
+    """
+    value = _TME_PREFIX_RE.sub("", clean_text(text))
+    return value.lstrip("@").strip()
+
+
 _PASSPORT_RE = re.compile(r"^[A-Z]{2}\d{7}$")
 _CYRILLIC_LOOKALIKES = str.maketrans("АВСЕКМНОРТХУІ", "ABCEKMHOPTXYI")
 """Uzbek passport series are printed in Latin, but phone keyboards happily produce the Cyrillic

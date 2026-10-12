@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from .models import RESIDENCE_VALUES, BotUser, FullProfile, Group, Student, TestUser, Tutor
+from .utils import parse_telegram_id
 
 _RESIDENCE_CHECK = "CHECK (residence IN ({}))".format(",".join(f"'{v}'" for v in RESIDENCE_VALUES))
 """The ``students.residence`` constraint, spelled from :data:`RESIDENCE_VALUES`. SQLite cannot
@@ -47,7 +49,8 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT,
   full_name TEXT NOT NULL DEFAULT '',
   started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-  last_start_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  last_start_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  blocked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS test_users (
   telegram_id INTEGER PRIMARY KEY,
@@ -156,11 +159,44 @@ JOIN tutors t ON t.id = f.tutor_id
 JOIN groups g ON g.id = f.group_id
 """
 
+# ``telegram_id`` is UNIQUE in both questionnaires, so each LEFT JOIN adds at most one row per user.
 _USER_SELECT = """
-SELECT u.*, (EXISTS(SELECT 1 FROM students s WHERE s.telegram_id = u.telegram_id)
-             OR EXISTS(SELECT 1 FROM full_profiles f WHERE f.telegram_id = u.telegram_id)) AS is_student
+SELECT u.*,
+       s.id IS NOT NULL AS has_basic,
+       f.id IS NOT NULL AS has_full,
+       COALESCE(s.full_name, f.full_name, '') AS student_name,
+       COALESCE(sg.name, fg.name, '') AS group_name,
+       COALESCE(st.name, ft.name, '') AS tutor_name
 FROM users u
+LEFT JOIN students s ON s.telegram_id = u.telegram_id
+LEFT JOIN groups sg ON sg.id = s.group_id
+LEFT JOIN tutors st ON st.id = s.tutor_id
+LEFT JOIN full_profiles f ON f.telegram_id = u.telegram_id
+LEFT JOIN groups fg ON fg.id = f.group_id
+LEFT JOIN tutors ft ON ft.id = f.tutor_id
 """
+
+# Best matches first: the exact Telegram ID, the exact username, usernames starting with the query,
+# then everyone else by name. ``casefold`` is registered in ``Database.init`` -- SQLite's own
+# ``lower()``/``LIKE`` fold ASCII only, and names are often Cyrillic or carry Uzbek letters.
+_USER_SEARCH = (
+    _USER_SELECT
+    + """
+WHERE u.telegram_id = :id
+   OR casefold(u.username) LIKE :anywhere ESCAPE '\\'
+   OR casefold(u.full_name) LIKE :anywhere ESCAPE '\\'
+   OR casefold(s.full_name) LIKE :anywhere ESCAPE '\\'
+   OR casefold(f.full_name) LIKE :anywhere ESCAPE '\\'
+ORDER BY CASE
+           WHEN u.telegram_id = :id THEN 0
+           WHEN casefold(u.username) = :exact THEN 1
+           WHEN casefold(u.username) LIKE :prefix ESCAPE '\\' THEN 2
+           ELSE 3
+         END,
+         casefold(COALESCE(s.full_name, f.full_name, u.full_name)), u.telegram_id
+LIMIT :limit
+"""
+)
 
 _TEST_USER_SELECT = """
 SELECT t.telegram_id, t.created_at, u.username AS username,
@@ -231,14 +267,31 @@ def _row_to_test_user(row: aiosqlite.Row) -> TestUser:
 
 
 def _row_to_bot_user(row: aiosqlite.Row) -> BotUser:
+    has_basic, has_full = bool(row["has_basic"]), bool(row["has_full"])
     return BotUser(
         telegram_id=row["telegram_id"],
         username=row["username"],
         full_name=row["full_name"],
         started_at=row["started_at"],
         last_start_at=row["last_start_at"],
-        is_student=bool(row["is_student"]),
+        is_student=has_basic or has_full,
+        blocked_at=row["blocked_at"],
+        has_basic=has_basic,
+        has_full=has_full,
+        student_name=row["student_name"],
+        group_name=row["group_name"],
+        tutor_name=row["tutor_name"],
     )
+
+
+def _casefold(value: object) -> object:
+    """SQL ``casefold(x)``: Unicode-aware lower-casing for searches; anything but text passes through."""
+    return value.casefold() if isinstance(value, str) else value
+
+
+def _like_escape(value: str) -> str:
+    """Make ``%`` and ``_`` (common in usernames) match themselves in a ``LIKE ... ESCAPE '\\'``."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _row_to_group(row: aiosqlite.Row) -> Group:
@@ -338,12 +391,16 @@ class Database:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(self.path)
         conn.row_factory = aiosqlite.Row
+        await conn.create_function("casefold", 1, _casefold, deterministic=True)
         await conn.execute("PRAGMA foreign_keys = ON")
         await conn.executescript(SCHEMA)
         # ``CREATE TABLE IF NOT EXISTS`` never alters a table that is already there, so columns
         # added after the first release have to be brought in explicitly.
         if "edited_at" not in await _existing_columns(conn, "students"):
             await conn.execute("ALTER TABLE students ADD COLUMN edited_at TEXT")
+        # Knowing who blocked the bot arrived after the users table did.
+        if "blocked_at" not in await _existing_columns(conn, "users"):
+            await conn.execute("ALTER TABLE users ADD COLUMN blocked_at TEXT")
         # The tutor's own phone number, a column of the full survey, arrived with it.
         if "phone" not in await _existing_columns(conn, "tutors"):
             await conn.execute("ALTER TABLE tutors ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
@@ -399,14 +456,19 @@ class Database:
     # -------------------------------------------------------------------- users
 
     async def touch_user(self, telegram_id: int, username: str | None, full_name: str) -> None:
-        """Record a /start press: the first one creates the row, later ones refresh the profile."""
+        """Record a /start press: the first one creates the row, later ones refresh the profile.
+
+        Pressing /start (which is also what Telegram's "Restart" button sends) proves the bot is not
+        blocked any more, so a stale mark is cleared on the way.
+        """
         await self._write(
             """
             INSERT INTO users (telegram_id, username, full_name) VALUES (?, ?, ?)
             ON CONFLICT(telegram_id) DO UPDATE SET
               username = excluded.username,
               full_name = excluded.full_name,
-              last_start_at = datetime('now','localtime')
+              last_start_at = datetime('now','localtime'),
+              blocked_at = NULL
             """,
             (telegram_id, username, full_name),
         )
@@ -434,6 +496,69 @@ class Database:
         """Telegram ids of everyone who ever pressed /start -- the audience of a broadcast."""
         rows = await self._fetchall("SELECT telegram_id FROM users ORDER BY started_at, telegram_id")
         return [int(r["telegram_id"]) for r in rows]
+
+    async def get_user(self, telegram_id: int) -> BotUser | None:
+        row = await self._fetchone(_USER_SELECT + " WHERE u.telegram_id = ?", (telegram_id,))
+        return _row_to_bot_user(row) if row else None
+
+    async def search_users(self, query: str, limit: int = 10) -> list[BotUser]:
+        """Users whose username or name contains ``query``, or whose Telegram ID it is; best first.
+
+        ``query`` is expected cleaned already (see ``bot.utils.clean_user_query``: no ``@``, no
+        ``t.me/`` prefix). Names are matched both as on the Telegram profile and as entered in either
+        questionnaire. An empty query finds nobody.
+        """
+        if not query:
+            return []
+        folded = query.casefold()
+        escaped = _like_escape(folded)
+        params = {
+            "id": parse_telegram_id(query),  # ``None`` for anything but digits: matches no row
+            "exact": folded,
+            "prefix": f"{escaped}%",
+            "anywhere": f"%{escaped}%",
+            "limit": limit,
+        }
+        async with self._lock:
+            async with self.conn.execute(_USER_SEARCH, params) as cur:
+                rows = list(await cur.fetchall())
+        return [_row_to_bot_user(r) for r in rows]
+
+    async def set_blocked(self, telegram_ids: Iterable[int], blocked: bool) -> int:
+        """Record that these users blocked the bot (``blocked=True``) or can be reached again.
+
+        Returns how many of them actually changed status, so a check can tell what is new. Someone
+        already marked keeps the moment they were first found blocked; ids missing from ``users``
+        (people who never pressed /start) are ignored.
+        """
+        params = [(int(telegram_id),) for telegram_id in telegram_ids]
+        if not params:
+            return 0
+        if blocked:
+            sql = "UPDATE users SET blocked_at = datetime('now','localtime') WHERE telegram_id = ? AND blocked_at IS NULL"
+        else:
+            sql = "UPDATE users SET blocked_at = NULL WHERE telegram_id = ? AND blocked_at IS NOT NULL"
+        async with self._lock:
+            try:
+                cur = await self.conn.executemany(sql, params)
+                await self.conn.commit()
+            except sqlite3.Error:
+                await self.conn.rollback()
+                raise
+        return max(cur.rowcount, 0)
+
+    async def count_blocked(self) -> int:
+        row = await self._fetchone("SELECT COUNT(*) AS n FROM users WHERE blocked_at IS NOT NULL")
+        assert row is not None
+        return int(row["n"])
+
+    async def list_blocked(self, limit: int, offset: int = 0) -> list[BotUser]:
+        """One page of the users known to have blocked the bot, the most recently found first."""
+        rows = await self._fetchall(
+            _USER_SELECT + " WHERE u.blocked_at IS NOT NULL ORDER BY u.blocked_at DESC, u.telegram_id LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        return [_row_to_bot_user(r) for r in rows]
 
     # -------------------------------------------------------------- test users
 

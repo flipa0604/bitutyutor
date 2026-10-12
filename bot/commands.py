@@ -24,6 +24,8 @@ ADMIN_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="admin", description="Admin panel"),
     BotCommand(command="tutors", description="Tyutorlar ro'yxati"),
     BotCommand(command="users", description="Bot foydalanuvchilari"),
+    BotCommand(command="find", description="Foydalanuvchini qidirish (username/ID)"),
+    BotCommand(command="blocked", description="Botni bloklaganlar"),
     BotCommand(command="test_users", description="Test userlar (qayta ro'yxatdan o'tishi mumkin)"),
     BotCommand(command="add_tutor", description="Tyutor qo'shish"),
     BotCommand(command="edit_tutor", description="Tyutorni tahrirlash"),

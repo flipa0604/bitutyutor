@@ -1590,6 +1590,8 @@ async def test_setup_bot_commands_scopes(h: Harness) -> None:
         "admin",
         "tutors",
         "users",
+        "find",
+        "blocked",
         "test_users",
         "add_tutor",
         "edit_tutor",

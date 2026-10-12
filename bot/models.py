@@ -30,7 +30,12 @@ class Tutor:
 
 @dataclass(frozen=True, slots=True)
 class BotUser:
-    """Someone who has pressed /start, whether or not they finished registering."""
+    """Someone who has pressed /start, whether or not they finished registering.
+
+    ``full_name`` is the Telegram profile name; ``student_name``, ``group_name`` and ``tutor_name``
+    come from the questionnaire they filled in (the basic one first, else the full one) and stay
+    empty for someone who never registered.
+    """
 
     telegram_id: int
     username: str | None
@@ -38,6 +43,18 @@ class BotUser:
     started_at: str
     last_start_at: str
     is_student: bool = False
+    blocked_at: str | None = None
+    """When the bot found out this user had blocked it (or deleted their account); ``None`` while
+    nothing says so. Cleared as soon as they can be reached again (/start, a delivered message)."""
+    has_basic: bool = False
+    has_full: bool = False
+    student_name: str = ""
+    group_name: str = ""
+    tutor_name: str = ""
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.blocked_at is not None
 
 
 @dataclass(frozen=True, slots=True)

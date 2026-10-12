@@ -354,6 +354,112 @@ async def test_users_are_recorded_refreshed_and_paged(db: Database) -> None:
     assert await db.list_users(10, 5) == []
 
 
+async def test_blocked_users_are_marked_listed_and_cleared(db: Database) -> None:
+    for telegram_id in (300, 301, 302):
+        await db.touch_user(telegram_id, f"u{telegram_id}", f"User {telegram_id}")
+    assert await db.count_blocked() == 0 and await db.list_blocked(10) == []
+
+    # only real status changes are counted; ids that never pressed /start are ignored
+    assert await db.set_blocked([300, 301, 999], True) == 2
+    assert await db.set_blocked([300], True) == 0
+    assert await db.count_blocked() == 2
+    first = await db.get_user(300)
+    assert first is not None and first.is_blocked and first.blocked_at
+    assert await db.get_user(999) is None
+    assert {u.telegram_id for u in await db.list_blocked(10)} == {300, 301}
+    assert len(await db.list_blocked(1)) == 1 and len(await db.list_blocked(1, 1)) == 1
+    assert await db.list_blocked(10, 2) == []
+    assert await db.set_blocked([], True) == 0
+
+    # the most recently found come first
+    await db.conn.execute("UPDATE users SET blocked_at = '2026-01-01 00:00:00' WHERE telegram_id = 301")
+    await db.conn.commit()
+    assert await db.set_blocked([302], True) == 1
+    assert [u.telegram_id for u in await db.list_blocked(10)][-1] == 301
+
+    # reachable again: through an explicit unmark, or by pressing /start
+    assert await db.set_blocked([300, 302], False) == 2
+    assert await db.set_blocked([300], False) == 0
+    await db.touch_user(301, "u301", "User 301")
+    assert await db.count_blocked() == 0
+    again = await db.get_user(301)
+    assert again is not None and not again.is_blocked and again.blocked_at is None
+
+
+async def test_user_rows_carry_their_questionnaires(db: Database) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", 1)
+    group = await db.add_group(tutor.id, "DI-21")
+    await db.touch_user(300, "vali", "Vali 🌟")
+    await db.touch_user(301, None, "Nomsiz")
+    await db.upsert_student(**student_kwargs(300, tutor.id, group.id, full_name="Aliyev Vali G'aniyevich"))
+
+    vali = await db.get_user(300)
+    assert vali is not None
+    assert (vali.is_student, vali.has_basic, vali.has_full) == (True, True, False)
+    assert (vali.student_name, vali.group_name, vali.tutor_name) == ("Aliyev Vali G'aniyevich", "DI-21", "Karimov Aziz")
+    stranger = await db.get_user(301)
+    assert stranger is not None
+    assert (stranger.is_student, stranger.student_name, stranger.group_name, stranger.tutor_name) == (False, "", "", "")
+    assert [u.telegram_id for u in await db.list_users(10)] == [300, 301]  # the joins add no rows
+
+
+async def test_search_users_by_username_id_and_name(db: Database) -> None:
+    tutor = await db.add_tutor("Karimov Aziz", 1)
+    group = await db.add_group(tutor.id, "DI-21")
+    await db.touch_user(300, "vali_01", "Vali")
+    await db.touch_user(301, "valijon", "Валиджон Каримов")
+    await db.touch_user(302, "ali", "Ali")
+    await db.touch_user(303, None, "Bobur")
+    await db.touch_user(30, "x", "Raqam")
+    await db.upsert_student(**student_kwargs(303, tutor.id, group.id, full_name="Toshmatov Bobur Vali o'g'li"))
+
+    def ids(users: list[Any]) -> list[int]:
+        return [u.telegram_id for u in users]
+
+    # the exact username first, then usernames starting with the query, then other name matches
+    assert ids(await db.search_users("valijon")) == [301]
+    assert ids(await db.search_users("vali")) == [300, 301, 303]
+    assert ids(await db.search_users("VALI_01")) == [300]  # case-insensitive
+    assert ids(await db.search_users("vali_")) == [300]  # "_" is not a wildcard
+    assert ids(await db.search_users("vali%")) == []
+    assert ids(await db.search_users("ali")) == [302, 303, 300, 301]  # rank 3 sorted by name
+    # names: the Telegram profile's (Cyrillic folds too) and the questionnaire's
+    assert ids(await db.search_users("каримов")) == [301]
+    assert ids(await db.search_users("toshmatov")) == [303]
+    # a Telegram ID matches exactly and ranks first; digits still match usernames and names
+    assert ids(await db.search_users("303")) == [303]
+    assert ids(await db.search_users("30")) == [30]  # not 300..303: an id never matches partially
+    assert ids(await db.search_users("01")) == [300]
+    assert ids(await db.search_users("vali", limit=2)) == [300, 301]
+    assert await db.search_users("") == [] and await db.search_users("nobody") == []
+
+
+async def test_older_users_table_gains_the_blocked_at_column(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE users (
+          telegram_id INTEGER PRIMARY KEY,
+          username TEXT,
+          full_name TEXT NOT NULL DEFAULT '',
+          started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+          last_start_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO users (telegram_id, username, full_name) VALUES (300, 'vali', 'Vali');
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    db = Database(path)
+    await db.init()
+    kept = await db.get_user(300)
+    assert kept is not None and kept.username == "vali" and kept.blocked_at is None
+    assert await db.set_blocked([300], True) == 1 and await db.count_blocked() == 1
+    await db.close()
+
+
 async def test_students_saved_before_the_users_table_are_backfilled(tmp_path: Path) -> None:
     """A database written before /users existed still lists everyone who had registered."""
     first = Database(tmp_path / "backfill.db")

@@ -285,11 +285,15 @@ async def test_delivery_failures_are_reported_honestly(h: Harness, monkeypatch: 
     failure.update(exc=TelegramForbiddenError, message="Forbidden: bot was blocked by the user")
     await h.feed(callback_update(tutor_user, f"stu:msg:{student.id}:t:basic"), text_update(tutor_user, "Salom"))
     assert h.messages(TUTOR)[-2].text == texts.STUDENT_MESSAGE_BLOCKED
+    marked = await h.db.get_user(STUDENT)
+    assert marked is not None and marked.is_blocked  # the refusal lands on the blocked list
 
     failure.update(exc=TelegramBadRequest, message="Bad Request: something else")
     await h.feed(callback_update(tutor_user, f"stu:msg:{student.id}:t:basic"), text_update(tutor_user, "Salom"))
     assert h.messages(TUTOR)[-2].text == texts.STUDENT_MESSAGE_FAILED
     assert await h.state_of(TUTOR) is None
+    still = await h.db.get_user(STUDENT)
+    assert still is not None and still.is_blocked  # an unrelated failure proves nothing either way
 
     # the deletion stands even when the farewell message cannot be delivered
     failure.update(exc=TelegramForbiddenError, message="Forbidden: bot was blocked by the user")

@@ -1,4 +1,4 @@
-"""System commands (/start, /help, /cancel), the cancel button and catch-all fallbacks.
+"""System commands (/start, /help, /cancel), the cancel button, block tracking and catch-all fallbacks.
 
 The system router must be included *before* the role routers so that ``/start``, ``/cancel`` and
 the cancel button pre-empt any FSM state; the common router must be included *last* (catch-alls).
@@ -6,10 +6,13 @@ the cancel button pre-empt any FSM state; the common router must be included *la
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, ReplyKeyboardRemove
 
 from .. import texts
 from ..commands import ADMIN_COMMANDS, TUTOR_COMMANDS
@@ -19,6 +22,8 @@ from ..filters import get_roles
 from ..keyboards import main_menu_kb
 from ..utils import hesc
 from .student import show_survey_picker
+
+log = logging.getLogger(__name__)
 
 
 async def cmd_start(message: Message, state: FSMContext, db: Database, settings: Settings, bot: Bot) -> None:
@@ -60,6 +65,24 @@ async def cmd_cancel(message: Message, state: FSMContext, db: Database, settings
         await message.answer(texts.CANCELLED_STUDENT, reply_markup=ReplyKeyboardRemove())
 
 
+async def on_my_chat_member(event: ChatMemberUpdated, db: Database) -> None:
+    """The user blocked the bot (``kicked``) or came back (``member``, e.g. via "Restart").
+
+    In a private chat Telegram sends this update for exactly those two events, so the blocked list
+    stays current without anyone having to write to the user first. Nothing is sent back: a blocked
+    chat would refuse it, and the one coming back gets their /start answered as usual.
+    """
+    status = event.new_chat_member.status
+    if status == ChatMemberStatus.KICKED:
+        blocked = True
+    elif status == ChatMemberStatus.MEMBER:
+        blocked = False
+    else:
+        return
+    changed = await db.set_blocked([event.chat.id], blocked)
+    log.info("User %s %s the bot%s", event.chat.id, "blocked" if blocked else "unblocked", "" if changed else " (no change)")
+
+
 # ------------------------------------------------------------- catch-alls
 
 
@@ -87,12 +110,17 @@ async def stale_callback(callback: CallbackQuery) -> None:
 
 
 def create_system_router() -> Router:
-    """/start, /help, /cancel and the cancel button; include FIRST so they pre-empt any FSM state."""
+    """/start, /help, /cancel and the cancel button; include FIRST so they pre-empt any FSM state.
+
+    Also the ``my_chat_member`` handler that records who blocked the bot. Registering it is what
+    makes polling ask Telegram for those updates (``allowed_updates`` is derived from the handlers).
+    """
     router = Router(name="system")
     router.message.register(cmd_start, CommandStart())
     router.message.register(cmd_help, Command("help"))
     router.message.register(cmd_cancel, Command("cancel"))
     router.message.register(cmd_cancel, F.text == texts.BTN_CANCEL)
+    router.my_chat_member.register(on_my_chat_member, F.chat.type == ChatType.PRIVATE)
     return router
 
 

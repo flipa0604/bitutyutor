@@ -263,9 +263,13 @@ async def cb_confirm(callback: CallbackQuery, state: FSMContext, db: Database, s
             log.debug("Broadcast progress update failed: %s", exc)
 
     report = await run_broadcast(bot, user_id, recipients, parts, progress)
+    # The broadcast doubles as a reachability check: a refusal marks the user as blocked, a delivery
+    # clears an earlier mark (they came back). Any other failure says nothing either way.
+    newly_blocked = await db.set_blocked(report.blocked_ids, True)
+    unblocked = await db.set_blocked(report.sent_ids, False)
     log.info(
-        "Broadcast by %s finished: %s sent, %s blocked, %s failed of %s",
-        user_id, report.sent, report.blocked, report.failed, report.total,
+        "Broadcast by %s finished: %s sent, %s blocked, %s failed of %s (%s newly blocked, %s unblocked)",
+        user_id, report.sent, report.blocked, report.failed, report.total, newly_blocked, unblocked,
     )
     await bot.send_message(
         user_id,

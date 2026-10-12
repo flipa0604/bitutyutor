@@ -32,6 +32,9 @@ BTN_ADMIN_ADD_TUTOR = "➕ Tyutor qo'shish"
 BTN_ADMIN_USERS = "👥 Foydalanuvchilar"
 BTN_ADMIN_TEST_USERS = "🧪 Test userlar"
 BTN_ADD_TEST_USER = "➕ Test user qo'shish"
+BTN_ADMIN_FIND = "🔍 Foydalanuvchi qidirish"
+BTN_ADMIN_BLOCKED = "🚫 Bloklaganlar"
+BTN_BLK_CHECK = "🔄 Hammasini tekshirish"
 BTN_ADMIN_EXCEL_ALL = "📊 Excel (barcha tyutorlar)"
 BTN_ADMIN_EXCEL_PICK = "📊 Excel (tyutor bo'yicha)"
 BTN_ADMIN_EXCEL_FULL = "🗂 Excel: to'liq anketa (hamma)"
@@ -154,6 +157,8 @@ HELP_ADMIN = (
     "/admin — admin panel\n"
     "/tutors — tyutorlar ro'yxati\n"
     "/users — botni ishga tushirgan barcha foydalanuvchilar\n"
+    "/find — foydalanuvchini username, ID yoki ism bo'yicha qidirish (botni bloklaganmi — shu zahoti tekshiriladi)\n"
+    "/blocked — botni bloklaganlar ro'yxati (🔄 bilan hammasini tekshirish)\n"
     "/test_users — qayta ro'yxatdan o'ta oladigan test userlar\n"
     "/add_tutor — tyutor qo'shish\n"
     "/edit_tutor — tyutorni tahrirlash\n"
@@ -257,7 +262,7 @@ USERS_EMPTY = "📭 Hozircha hech kim botni ishga tushirmagan."
 USERS_TITLE = (
     "👥 <b>Bot foydalanuvchilari</b>\n\n"
     "Jami: <b>{total}</b> ta · ✅ ro'yxatdan o'tgan: <b>{registered}</b> ta · "
-    "🕗 o'tmagan: <b>{pending}</b> ta\n"
+    "🕗 o'tmagan: <b>{pending}</b> ta · 🚫 bloklagan: <b>{blocked}</b> ta\n"
     "📄 {page}/{pages}-sahifa"
 )
 
@@ -279,17 +284,21 @@ def test_user_button_label(user: TestUser) -> str:
 
 
 def user_line(index: int, user: BotUser) -> str:
-    """One row of /users: ``✅`` finished registering, ``🕗`` only pressed /start."""
+    """One row of /users: ``✅`` finished registering, ``🕗`` only pressed /start; ``🚫`` blocked the bot."""
     mark = "✅" if user.is_student else "🕗"
+    if user.is_blocked:
+        mark += "🚫"
     username = f" @{hesc(user.username)}" if user.username else ""
     name = hesc(user.full_name) or "—"
     return f"{index}. {mark} {name}{username} — <code>{user.telegram_id}</code>"
 
 
-def users_page(users: Sequence[BotUser], total: int, registered: int, page: int, pages: int, offset: int) -> str:
+def users_page(
+    users: Sequence[BotUser], total: int, registered: int, page: int, pages: int, offset: int, blocked: int = 0
+) -> str:
     """The /users message: counters, page number and the numbered slice (``offset`` is 0-based)."""
     head = USERS_TITLE.format(
-        total=total, registered=registered, pending=total - registered, page=page + 1, pages=pages
+        total=total, registered=registered, pending=total - registered, blocked=blocked, page=page + 1, pages=pages
     )
     lines = [user_line(offset + i, u) for i, u in enumerate(users, start=1)]
     return head + "\n\n" + "\n".join(lines)
@@ -309,6 +318,128 @@ def tutor_card(tutor: Tutor, groups: int, students: int, profiles: int) -> str:
         profiles=profiles,
         created_at=hesc(tutor.created_at),
     )
+
+
+# ---------------------------------------------- blocked users and search (superadmin)
+
+BLOCKED_TITLE = (
+    "🚫 <b>Botni bloklaganlar</b>: <b>{n}</b> ta (jami {total} ta foydalanuvchidan)\n"
+    "📄 {page}/{pages}-sahifa"
+)
+BLOCKED_EMPTY = "✅ Botni bloklaganlar hozircha aniqlanmagan (jami {total} ta foydalanuvchi)."
+BLOCKED_NOTE = (
+    "ℹ️ Bot buni foydalanuvchi uni bloklagan zahoti, xabar yetib bormaganda va 🔄 Hammasini tekshirish "
+    "bosilganda bilib oladi (Telegram akkauntini o'chirganlar ham shu yerga tushadi). Bu bo'lim "
+    "qo'shilishidan oldin bloklaganlarni topish uchun 🔄 ni bir marta bosing. Qayta /start bosgan "
+    "foydalanuvchi ro'yxatdan o'zi chiqib ketadi."
+)
+BLK_CHECK_STARTED = (
+    "🔄 Tekshirilmoqda… {done}/{total}\n\n"
+    "Hech kimga xabar yuborilmaydi — foydalanuvchilarda bir necha soniya «yozmoqda…» belgisi "
+    "ko'rinishi mumkin, xolos."
+)
+BLK_CHECK_RUNNING = "🔄 Tekshiruv allaqachon ketmoqda — tugashini kuting."
+BLK_CHECK_REPORT = (
+    "✅ <b>Tekshiruv tugadi.</b>\n"
+    "👥 Tekshirildi: {total}\n"
+    "✅ Xabar yetib boradi: {reachable}\n"
+    "🚫 Botni bloklagan: {blocked} (yangi: {newly_blocked})\n"
+    "♻️ Blokdan chiqargan: {unblocked}\n"
+    "⚠️ Aniqlab bo'lmadi: {failed}"
+)
+
+ASK_USER_SEARCH = (
+    "🔍 <b>Foydalanuvchi qidirish</b>\n\n"
+    "Username (@ bilan yoki @siz), Telegram ID yoki ismini yuboring — yoki uning biror xabarini "
+    "<i>forward</i> qiling. Topilganlarning botni bloklagan-bloklamagani shu zahoti tekshiriladi."
+)
+SEARCH_QUERY_INVALID = "❗️ So'rov {min}–{max} belgidan iborat bo'lishi kerak. Username, ID yoki ismni qaytadan yuboring:"
+SEARCH_TEXT_ONLY = "❗️ Username, ID yoki ismni matn qilib yuboring (yoki foydalanuvchining xabarini forward qiling)."
+SEARCH_FORWARD_HIDDEN = "❗️ Bu xabar egasi forward qilinganda profilini yashirgan. Uni username yoki ID bo'yicha qidiring."
+SEARCH_NOT_FOUND = (
+    "🔎 «{query}» bo'yicha hech kim topilmadi — u botni hali ishga tushirmagan bo'lishi mumkin. "
+    "Boshqacha yozib ko'ring yoki ❌ Bekor qilish ni bosing."
+)
+SEARCH_HEADER = "🔎 «{query}» bo'yicha topildi: <b>{n}</b> ta"
+SEARCH_HEADER_MORE = "🔎 «{query}» bo'yicha {limit} tadan ko'p topildi — birinchi {limit} tasi:"
+SEARCH_MORE_HINT = "ℹ️ Hammasi sig'madi — aniqroq yozing (to'liq username yoki ID)."
+SEARCH_FOOTER = "Yana qidirish uchun yangi so'rov yuboring yoki ❌ Bekor qilish ni bosing."
+SEARCH_TELEGRAM_NAME = "📱 Telegram'dagi ismi: {name}"
+SEARCH_ID = "🆔 ID: <code>{telegram_id}</code>"
+SEARCH_SURVEYS = "🎓 To'ldirgan: {surveys}"
+SEARCH_GROUP = "👥 Guruh: {group} · 👨‍🏫 Tyutor: {tutor}"
+SEARCH_NOT_REGISTERED = "🕗 Anketa to'ldirmagan"
+SEARCH_STARTED = "🕒 Botga kirgan: {first} · oxirgi /start: {last}"
+SEARCH_STATUS_BLOCKED = "🚫 <b>Botni bloklagan</b> — {since} dan beri (yoki Telegram akkauntini o'chirgan)"
+SEARCH_STATUS_REACHABLE = "✅ <b>Botni bloklamagan</b> — xabarlar yetib boradi"
+SEARCH_STATUS_UNKNOWN_BLOCKED = "❔ Hozir tekshirib bo'lmadi. Oxirgi ma'lum holat: 🚫 bloklagan ({since} dan beri)"
+SEARCH_STATUS_UNKNOWN = "❔ Hozir tekshirib bo'lmadi; avval bloklagani aniqlanmagan."
+
+NAME_CLIP = 60
+"""Longest name shown in a list line or search result; a list page must fit one Telegram message."""
+_LIST_NAME_CLIP = 40
+_GROUP_CLIP = 30
+
+
+def _clip(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def short_time(value: str | None) -> str:
+    """``2026-10-12 14:03:22`` -> ``2026-10-12 14:03``: nobody needs the seconds here."""
+    return (value or "")[:16]
+
+
+def _user_name(user: BotUser, limit: int) -> str:
+    """The name staff know a student by (the questionnaire's F.I.SH), else the Telegram profile's."""
+    return hesc(_clip(user.student_name or user.full_name, limit)) or "—"
+
+
+def blocked_line(index: int, user: BotUser) -> str:
+    username = f" @{hesc(user.username)}" if user.username else ""
+    group = f" · 👥 {hesc(_clip(user.group_name, _GROUP_CLIP))}" if user.group_name else ""
+    since = f" · 🕒 {hesc(short_time(user.blocked_at))}" if user.blocked_at else ""
+    return f"{index}. {_user_name(user, _LIST_NAME_CLIP)}{username} — <code>{user.telegram_id}</code>{group}{since}"
+
+
+def blocked_page(users: Sequence[BotUser], blocked: int, total: int, page: int, pages: int, offset: int) -> str:
+    """One page of the blocked list (``offset`` is 0-based) with the note on how it is filled."""
+    head = BLOCKED_TITLE.format(n=blocked, total=total, page=page + 1, pages=pages)
+    lines = [blocked_line(offset + i, u) for i, u in enumerate(users, start=1)]
+    return head + "\n\n" + "\n".join(lines) + "\n\n" + BLOCKED_NOTE
+
+
+def blocked_empty(total: int) -> str:
+    return BLOCKED_EMPTY.format(total=total) + "\n\n" + BLOCKED_NOTE
+
+
+def reach_status(user: BotUser, checked: bool) -> str:
+    """Has this user blocked the bot? ``checked``: whether the live check just now got an answer --
+    the answer itself is already stored in ``user.blocked_at``."""
+    since = hesc(short_time(user.blocked_at))
+    if checked:
+        return SEARCH_STATUS_BLOCKED.format(since=since) if user.is_blocked else SEARCH_STATUS_REACHABLE
+    return SEARCH_STATUS_UNKNOWN_BLOCKED.format(since=since) if user.is_blocked else SEARCH_STATUS_UNKNOWN
+
+
+def search_result(index: int, user: BotUser, checked: bool) -> str:
+    """One found user: who they are, where they registered, and whether the bot can reach them."""
+    head = f"{index}. 👤 <b>{_user_name(user, NAME_CLIP)}</b>"
+    if user.username:
+        head += f" @{hesc(user.username)}"
+    lines = [head]
+    if user.student_name and user.full_name and user.full_name != user.student_name:
+        lines.append(SEARCH_TELEGRAM_NAME.format(name=hesc(_clip(user.full_name, NAME_CLIP))))
+    lines.append(SEARCH_ID.format(telegram_id=user.telegram_id))
+    if user.is_student:
+        surveys = [label for done, label in ((user.has_basic, BTN_SURVEY_BASIC), (user.has_full, BTN_SURVEY_FULL)) if done]
+        lines.append(SEARCH_SURVEYS.format(surveys=" · ".join(surveys)))
+        lines.append(SEARCH_GROUP.format(group=hesc(user.group_name), tutor=hesc(user.tutor_name)))
+    else:
+        lines.append(SEARCH_NOT_REGISTERED)
+    lines.append(SEARCH_STARTED.format(first=hesc(short_time(user.started_at)), last=hesc(short_time(user.last_start_at))))
+    lines.append(reach_status(user, checked))
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------- tutor

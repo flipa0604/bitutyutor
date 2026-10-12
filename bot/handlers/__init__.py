@@ -1,9 +1,9 @@
 """Router factories in the order they must be included into the Dispatcher.
 
 System router (start/help/cancel) first so it pre-empts FSM states; role routers next
-(admin, broadcast = superadmin's message to everyone, tutor, student = the basic questionnaire and the
-survey picker, full = the full questionnaire, then manage = student management shared by tutors and
-superadmins, after the
+(admin, broadcast = superadmin's message to everyone, blocked = superadmin's blocked list and user
+search, tutor, student = the basic questionnaire and the survey picker, full = the full
+questionnaire, then manage = student management shared by tutors and superadmins, after the
 student router so ordinary student traffic never pays for its staff lookup); common router last
 because it holds the catch-alls.
 Routers are created fresh on every call because aiogram routers can be attached to one parent only.
@@ -11,7 +11,7 @@ Routers are created fresh on every call because aiogram routers can be attached 
 
 from aiogram import Router
 
-from . import admin, broadcast, common, full, manage, student, tutor
+from . import admin, blocked, broadcast, common, full, manage, student, tutor
 
 
 def create_routers() -> list[Router]:
@@ -19,6 +19,7 @@ def create_routers() -> list[Router]:
         common.create_system_router(),
         admin.create_router(),
         broadcast.create_router(),
+        blocked.create_router(),
         tutor.create_router(),
         student.create_router(),
         full.create_router(),
